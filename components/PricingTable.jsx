@@ -8,9 +8,10 @@ function Tier({
   description,
   features = [],
   ctaLabel = "Subscribe",
-  ctaHref = "#",
+  tierKey = "starter", // "starter" | "pro" | "team"
   highlight = false,
 }) {
+  const href = `/api/stripe/checkout?tier=${encodeURIComponent(tierKey)}`;
   return (
     <div
       style={{
@@ -73,7 +74,7 @@ function Tier({
       </ul>
 
       <a
-        href={ctaHref}
+        href={href}
         style={{
           marginTop: 8,
           textAlign: "center",
@@ -94,10 +95,6 @@ function Tier({
 }
 
 export default function PricingTable() {
-  const STARTER_LINK = process.env.NEXT_PUBLIC_STRIPE_STARTER_URL || "#";
-  const PRO_LINK = process.env.NEXT_PUBLIC_STRIPE_PRO_URL || "#";
-  const TEAM_LINK = process.env.NEXT_PUBLIC_STRIPE_TEAM_URL || "#";
-
   return (
     <section
       style={{
@@ -141,7 +138,7 @@ export default function PricingTable() {
               "Email support",
             ]}
             ctaLabel="Start"
-            ctaHref={STARTER_LINK}
+            tierKey="starter"
           />
           <Tier
             name="Pro"
@@ -154,7 +151,7 @@ export default function PricingTable() {
               "Early access to new features",
             ]}
             ctaLabel="Subscribe"
-            ctaHref={PRO_LINK}
+            tierKey="pro"
             highlight
           />
           <Tier
@@ -168,7 +165,7 @@ export default function PricingTable() {
               "Priority support SLAs",
             ]}
             ctaLabel="Contact sales"
-            ctaHref={TEAM_LINK}
+            tierKey="team"
           />
         </div>
 
