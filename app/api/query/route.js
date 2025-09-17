@@ -12,15 +12,36 @@ const qdrant = new QdrantClient({
 });
 
 const COLLECTION = process.env.QDRANT_COLLECTION || "ssc2";
-// Default OFF per your request. Set APP_REQUIRE_PHI_FILTER=true to re-enable.
 const REQUIRE_PHI_FILTER =
   (process.env.APP_REQUIRE_PHI_FILTER || "false").toLowerCase() === "true";
 
 function containsPHI(text) {
-  // Very basic placeholder — safe to delete entirely if you never want PHI checks
   const rx =
     /(dob|mrn|ssn|social security|address|phone\s*:\s*\d|patient\s+name|full\s+name)/i;
   return rx.test(text || "");
+}
+
+/** ------------------------------
+ * Build citations from CURRENT results
+ * ------------------------------ */
+function buildCitations(results = []) {
+  const seen = new Set();
+  const list = [];
+
+  for (const hit of results) {
+    const p = hit?.payload || hit?.point?.payload || {};
+    const L = Number(p.level || p?.metadata?.level || p?.meta?.level);
+    const S =
+      Number(p.section || p.module || p?.metadata?.section || p?.meta?.section);
+    if (!L || !S) continue;
+    const key = `L${L}-S${S}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const t = (p.title || p?.metadata?.title || p?.meta?.title || "").toString().trim();
+    list.push(t ? `Level ${L} section ${S} — ${t}` : `Level ${L} section ${S}`);
+  }
+
+  return list;
 }
 
 export async function POST(req) {
@@ -29,10 +50,9 @@ export async function POST(req) {
     const question = (body?.question || "").trim();
 
     if (!question) {
-      return new Response(
-        JSON.stringify({ error: "Question is required." }),
-        { status: 400 }
-      );
+      return new Response(JSON.stringify({ error: "Question is required." }), {
+        status: 400,
+      });
     }
 
     if (REQUIRE_PHI_FILTER && containsPHI(question)) {
@@ -45,37 +65,77 @@ export async function POST(req) {
       );
     }
 
-    // Embed the question
+    // 1) Embed
     const embed = await openai.embeddings.create({
       model: "text-embedding-3-large",
       input: question,
     });
     const queryVec = embed.data[0].embedding;
 
-    // Vector search in Qdrant
+    // 2) Search
     const results = await qdrant.search(COLLECTION, {
       vector: queryVec,
       limit: 6,
     });
 
+    // 3) Context blocks with Level/Section/Title when available
     const contextBlocks = results
       .map((r, i) => {
-        const p = r.payload || {};
-        return `#${i + 1} [Level ${p.level ?? "?"} section ${
-          p.module ?? "?"
-        } ${p.timestamp_start ?? ""}-${p.timestamp_end ?? ""} p.${
-          p.page ?? ""
-        }]
-${p.text ?? ""}`;
+        const p = r?.payload || r?.point?.payload || {};
+        const L =
+          p.level ??
+          p?.metadata?.level ??
+          p?.meta?.level ??
+          "?";
+        const S =
+          p.section ??
+          p.module ??
+          p?.metadata?.section ??
+          p?.meta?.section ??
+          "?";
+        const title =
+          p.title ??
+          p?.metadata?.title ??
+          p?.meta?.title ??
+          "";
+        const tsStart = p.timestamp_start ?? "";
+        const tsEnd = p.timestamp_end ?? "";
+        const page = p.page ?? "";
+        const text = p.text ?? p.content ?? "";
+
+        const header = title
+          ? `Level ${L} section ${S} — ${title}`
+          : `Level ${L} section ${S}`;
+
+        return `#${i + 1} [${header} ${tsStart}${tsEnd ? "-" + tsEnd : ""} p.${page}]
+${text}`;
       })
       .join("\n\n");
 
-    // Compose completion
+    // 4) Per-request CITATIONS (with titles when present)
+    const citList = buildCitations(results);
+    const citationsBlock = citList.length
+      ? citList.map((c) => `- ${c}`).join("\n")
+      : "(none)";
+
+    // 5) Compose
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
-        content: `Question:\n${question}\n\nRetrieved Context:\n${contextBlocks}\n\nInstructions:\n- Use ONLY the context.\n- Follow the output format exactly.\n- If context is insufficient, follow the fallback rule in the system prompt.`,
+        content: `Question:
+${question}
+
+Retrieved Context:
+${contextBlocks}
+
+CITATIONS (only cite items from this list; do NOT add page numbers):
+${citationsBlock}
+
+Instructions:
+- Use ONLY the context above.
+- Follow the output format exactly.
+- If context is insufficient, use the required fallback line from the system prompt.`,
       },
     ];
 
