@@ -5,18 +5,22 @@ import { useEffect, useRef, useState } from "react";
 import { marked } from "marked";
 
 export default function Home() {
+  // Chat state
+  const [messages, setMessages] = useState([]); // [{id, role:'user'|'assistant'|'pending', content}]
   const [q, setQ] = useState("");
-  const [answer, setAnswer] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [listening, setListening] = useState(false);
+
   const inputRef = useRef(null);
+  const endRef = useRef(null);
   const recognitionRef = useRef(null);
 
-  // Make the whole page dark & control scroll lock till we have an answer
+  // ===== Page background + mobile scroll lock =====
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
+    const isMobile = () => window.innerWidth <= 768;
 
     const applyBase = () => {
       html.style.background = "#212121";
@@ -24,27 +28,25 @@ export default function Home() {
       body.style.color = "#EAEAEA";
       body.style.margin = "0";
       body.style.minHeight = "100vh";
+
+      // Lock scroll on mobile until we send the first prompt (or while answering)
+      const allowScroll = loading || messages.length > 0;
+      if (isMobile()) {
+        html.style.overflow = allowScroll ? "" : "hidden";
+        body.style.overflow = allowScroll ? "" : "hidden";
+      } else {
+        html.style.overflow = "";
+        body.style.overflow = "";
+      }
     };
 
     applyBase();
-
-    // Lock scroll until an answer exists
-    if (!answer) {
-      html.style.overflow = "hidden";
-      body.style.overflow = "hidden";
-    } else {
-      html.style.overflow = "";
-      body.style.overflow = "";
-    }
-
     const onResize = () => applyBase();
     window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-    };
-  }, [answer]);
+    return () => window.removeEventListener("resize", onResize);
+  }, [loading, messages.length]);
 
-  // Web Speech API (voice)
+  // ===== Voice input (Web Speech API) =====
   useEffect(() => {
     if (typeof window === "undefined") return;
     const SR =
@@ -90,29 +92,61 @@ export default function Home() {
     }
   }
 
-  async function ask(e) {
-    e?.preventDefault?.();
-    if (!q.trim()) return;
+  // Auto-scroll to newest message
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length, loading]);
+
+  // Core send function used by form submit + suggestion chips
+  async function sendMessage(text) {
+    const content = (text ?? q).trim();
+    if (!content || loading) return;
+
     setError("");
-    setAnswer("");
+
+    // Push user bubble
+    const userMsg = { id: crypto.randomUUID(), role: "user", content };
+    setMessages((prev) => [...prev, userMsg]);
+
+    // Add a pending bubble (spinner)
+    const pendingMsg = { id: "pending", role: "pending", content: "" };
+    setMessages((prev) => [...prev, pendingMsg]);
+    setQ("");
     setLoading(true);
+
     try {
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify({ question: content }),
       });
       if (!res.ok) {
         const problem = await res.json().catch(() => ({}));
         throw new Error(problem?.error || "Something went wrong.");
       }
       const data = await res.json();
-      setAnswer(data.answer || "");
+      const answer = data.answer || "";
+
+      // Replace pending with assistant answer
+      setMessages((prev) => {
+        const withoutPending = prev.filter((m) => m.id !== "pending");
+        return [
+          ...withoutPending,
+          { id: crypto.randomUUID(), role: "assistant", content: answer },
+        ];
+      });
     } catch (err) {
+      setMessages((prev) => prev.filter((m) => m.id !== "pending"));
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  }
+
+  // Form handler
+  async function onSubmit(e) {
+    e?.preventDefault?.();
+    sendMessage(q);
   }
 
   const suggestions = [
@@ -121,6 +155,95 @@ export default function Home() {
     "What are the risks of untreated OSA?",
     "Where in SSC does Dr. Spencer cover mandibular advancement?",
   ];
+
+  // Simple bubble components
+  const UserBubble = ({ children }) => (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "flex-end",
+        margin: "8px 0",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 760,
+          background: "#2A2A2A",
+          border: "1px solid #3A3A3A",
+          color: "#EAEAEA",
+          padding: "10px 12px",
+          borderRadius: 12,
+          borderTopRightRadius: 4,
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+
+  const AssistantBubble = ({ children }) => (
+    <div style={{ display: "flex", gap: 10, margin: "10px 0" }}>
+      <img
+        src="/dr-spencer.jpg"
+        alt="Dr. Spencer"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          border: "1px solid #424242",
+          objectFit: "cover",
+          marginTop: 2,
+        }}
+      />
+      <div
+        style={{
+          maxWidth: 760,
+          background: "#181818",
+          border: "1px solid #2A2A2A",
+          color: "#EAEAEA",
+          padding: "12px 14px",
+          borderRadius: 12,
+          borderTopLeftRadius: 4,
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+
+  const PendingBubble = () => (
+    <div style={{ display: "flex", gap: 10, margin: "10px 0", alignItems: "center" }}>
+      <img
+        src="/dr-spencer.jpg"
+        alt="Dr. Spencer"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          border: "1px solid #424242",
+          objectFit: "cover",
+        }}
+      />
+      <div
+        style={{
+          background: "#181818",
+          border: "1px solid #2A2A2A",
+          padding: "10px 12px",
+          borderRadius: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#BDBDBD" }}>
+          <svg width="24" height="24" viewBox="0 0 50 50">
+            <circle cx="25" cy="25" r="20" stroke="#90CAF9" strokeWidth="4" fill="none" strokeLinecap="round">
+              <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.9s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          Thinking…
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <main
@@ -168,7 +291,7 @@ export default function Home() {
             maxWidth: 900,
             width: "100%",
             margin: "0 auto",
-            padding: "96px 16px 24px",
+            padding: "96px 16px 12px",
             textAlign: "center",
           }}
         >
@@ -197,7 +320,7 @@ export default function Home() {
               <h1
                 style={{
                   margin: 0,
-                  fontSize: 48,
+                  fontSize: 42,
                   fontWeight: 800,
                   letterSpacing: 0.2,
                 }}
@@ -209,7 +332,7 @@ export default function Home() {
 
           <p
             style={{
-              margin: "12px auto 0",
+              margin: "8px auto 0",
               maxWidth: 820,
               color: "#D0D0D0",
               lineHeight: 1.6,
@@ -221,44 +344,46 @@ export default function Home() {
             clear, practical points right from the SSC modules. What’s your question?
           </p>
 
-          {/* Suggested prompts */}
-          <div
-            style={{
-              marginTop: 24,
-              display: "flex",
-              flexWrap: "wrap",
-              justifyContent: "center",
-              gap: 12,
-            }}
-          >
-            {suggestions.map((s, i) => (
-              <button
-                key={i}
-                onClick={() => setQ(s)}
-                style={{
-                  background: "#2A2A2A",
-                  border: "1px solid #3A3A3A",
-                  color: "#DADADA",
-                  borderRadius: 20,
-                  padding: "10px 14px",
-                  cursor: "pointer",
-                  fontSize: 14,
-                }}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+          {/* Suggested prompts (now auto-send) */}
+          {messages.length === 0 && (
+            <div
+              style={{
+                marginTop: 20,
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "center",
+                gap: 12,
+              }}
+            >
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => !loading && sendMessage(s)}
+                  style={{
+                    background: "#2A2A2A",
+                    border: "1px solid #3A3A3A",
+                    color: "#DADADA",
+                    borderRadius: 20,
+                    padding: "10px 14px",
+                    cursor: loading ? "not-allowed" : "pointer",
+                    fontSize: 14,
+                    opacity: loading ? 0.7 : 1,
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
-        {/* Answer area */}
+        {/* Chat area */}
         <section
           style={{
             maxWidth: 900,
             width: "100%",
             margin: "0 auto",
-            padding: "0 16px 140px",
-            minHeight: 180,
+            padding: "8px 16px 140px",
           }}
         >
           {error && (
@@ -277,82 +402,33 @@ export default function Home() {
             </div>
           )}
 
-          {loading && (
-            <div
-              style={{
-                marginTop: 24,
-                display: "grid",
-                placeItems: "center",
-                color: "#BDBDBD",
-                gap: 12,
-              }}
-            >
-              <svg
-                width="44"
-                height="44"
-                viewBox="0 0 50 50"
-                style={{ display: "block" }}
-              >
-                <circle
-                  cx="25"
-                  cy="25"
-                  r="20"
-                  stroke="#90CAF9"
-                  strokeWidth="4"
-                  fill="none"
-                  strokeLinecap="round"
-                >
-                  <animateTransform
-                    attributeName="transform"
-                    type="rotate"
-                    from="0 25 25"
-                    to="360 25 25"
-                    dur="0.9s"
-                    repeatCount="indefinite"
-                  />
-                </circle>
-              </svg>
-              <div style={{ fontSize: 14 }}>Thinking… searching SSC 2.0</div>
-            </div>
+          {messages.map((m) =>
+            m.role === "user" ? (
+              <UserBubble key={m.id}>{m.content}</UserBubble>
+            ) : m.role === "assistant" ? (
+              <AssistantBubble key={m.id}>
+                <div
+                  style={{ color: "#EAEAEA" }}
+                  dangerouslySetInnerHTML={{ __html: marked.parse(m.content || "") }}
+                />
+              </AssistantBubble>
+            ) : (
+              <PendingBubble key={m.id} />
+            )
           )}
 
-          {!loading && answer && (
-            <div
-              style={{
-                margin: "16px auto 0",
-                background: "#181818",           // <-- your requested darker card color
-                border: "1px solid #2A2A2A",
-                borderRadius: 12,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  padding: "10px 14px",
-                  background: "#2A2A2A",
-                  borderBottom: "1px solid #3A3A3A",
-                  fontWeight: 600,
-                }}
-              >
-                Dr. Spencer’s Answer
-              </div>
-              <div
-                style={{ padding: 16, color: "#EAEAEA" }}
-                dangerouslySetInnerHTML={{ __html: marked.parse(answer || "") }}
-              />
-            </div>
-          )}
+          <div ref={endRef} style={{ height: 1 }} />
         </section>
 
         {/* Bottom chat bar */}
         <form
-          onSubmit={ask}
+          onSubmit={onSubmit}
           style={{
             position: "fixed",
             left: 0,
             right: 0,
             bottom: 0,
-            padding: "16px 16px 24px",
+            padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 24px)",
             background:
               "linear-gradient(180deg, rgba(33,33,33,0) 0%, rgba(33,33,33,0.85) 30%, #212121 65%)",
             display: "flex",
@@ -417,7 +493,7 @@ export default function Home() {
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  ask(e);
+                  sendMessage(q);
                 }
               }}
             />
