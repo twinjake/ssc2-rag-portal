@@ -1,0 +1,25 @@
+# dependencies & build
+node_modules/
+.next/
+out/
+.vercel/
+coverage/
+dist/
+
+# env & local
+.env
+.env.*
+!.env.example
+*.local
+
+# OS/editor
+.DS_Store
+*.log
+*.swp
+
+# cache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.cache/
