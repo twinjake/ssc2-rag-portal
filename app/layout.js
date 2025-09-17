@@ -1,4 +1,5 @@
 // app/layout.js
+import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 
 export const metadata = {
@@ -6,35 +7,24 @@ export const metadata = {
   description: "Ask Dr. Spencer (SSC 2.0)",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/favicon.png", type: "image/png" },
+      { url: "/favicon.ico", sizes: "any" },        // optional for older browsers
+      { url: "/favicon.png", type: "image/png" },   // modern
     ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
   },
 };
-
-export const viewport = {
-  width: "device-width",
-  initialScale: 1,
-  viewportFit: "cover",
-};
-
-const SYSTEM_SANS =
-  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
 export default function RootLayout({ children }) {
   return (
     <ClerkProvider>
-      <html lang="en" style={{ overflowX: "hidden", background: "#212121" }}>
+      <html lang="en">
         <body
           style={{
             margin: 0,
+            background: "#212121",
+            color: "#e6e6e6",
             overflowX: "hidden",
             minHeight: "100vh",
-            background: "#212121",
-            color: "#EAEAEA",
-            fontFamily: SYSTEM_SANS, // ← restore original system font
-            fontSize: 16,
-            lineHeight: 1.5,
           }}
         >
           {children}
