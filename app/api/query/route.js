@@ -12,6 +12,8 @@ const qdrant = new QdrantClient({
 });
 
 const COLLECTION = process.env.QDRANT_COLLECTION || "ssc2";
+
+// Optional PHI gate (stays off unless APP_REQUIRE_PHI_FILTER=true)
 const REQUIRE_PHI_FILTER =
   (process.env.APP_REQUIRE_PHI_FILTER || "false").toLowerCase() === "true";
 
@@ -21,27 +23,62 @@ function containsPHI(text) {
   return rx.test(text || "");
 }
 
-/** ------------------------------
- * Build citations from CURRENT results
- * ------------------------------ */
-function buildCitations(results = []) {
-  const seen = new Set();
-  const list = [];
+function extractCitationFromPayload(payload = {}) {
+  const candidates = [
+    payload.source_file,
+    payload.source,
+    payload.file,
+    payload.filename,
+    payload.filepath,
+    payload.path,
+    payload.url,
+    payload.name,
+    payload.title,
+  ].filter((v) => typeof v === "string" && v);
 
-  for (const hit of results) {
-    const p = hit?.payload || hit?.point?.payload || {};
-    const L = Number(p.level || p?.metadata?.level || p?.meta?.level);
-    const S =
-      Number(p.section || p.module || p?.metadata?.section || p?.meta?.section);
-    if (!L || !S) continue;
-    const key = `L${L}-S${S}`;
+  if (!candidates.length) return null;
+
+  let base = candidates[0].split(/[\\/]/).pop();
+  base = base.replace(/\.[^.]+$/, "");
+
+  // Filenames like "205- Fitting A Custom OA"
+  let level = null, section = null, title = null;
+  const m = base.match(/\b([1-5])([0-9]{2})\b/); // 101..599
+  if (m) {
+    level = Number(m[1]);
+    section = Number(m[2].replace(/^0/, "")) || Number(m[2]);
+    const dash = base.indexOf("-");
+    if (dash !== -1) {
+      title = base.slice(dash + 1).trim();
+    }
+  }
+  if (!level || !section) return null;
+
+  return {
+    level,
+    section,
+    title: title ? title.charAt(0).toUpperCase() + title.slice(1) : null,
+  };
+}
+
+function buildCitationsFromResults(results = []) {
+  const seen = new Set();
+  const items = [];
+  for (const r of results) {
+    const p = r?.payload || {};
+    const c = extractCitationFromPayload(p);
+    if (!c) continue;
+    const key = `L${c.level}-S${c.section}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const t = (p.title || p?.metadata?.title || p?.meta?.title || "").toString().trim();
-    list.push(t ? `Level ${L} section ${S} — ${t}` : `Level ${L} section ${S}`);
-  }
 
-  return list;
+    const label = c.title
+      ? `Level ${c.level} section ${c.section} — ${c.title}`
+      : `Level ${c.level} section ${c.section}`;
+    items.push(label);
+    if (items.length >= 6) break; // cap for neatness
+  }
+  return items;
 }
 
 export async function POST(req) {
@@ -49,93 +86,78 @@ export async function POST(req) {
     const body = await req.json();
     const question = (body?.question || "").trim();
 
+    // history: [{role:"user"|"assistant", content:"..."}, ...]
+    const rawHistory = Array.isArray(body?.history) ? body.history : [];
+    // keep last 10 messages (5 turns); drop anything else
+    const history = rawHistory.slice(-10).filter(
+      (m) => m && typeof m.content === "string" && (m.role === "user" || m.role === "assistant")
+    );
+
     if (!question) {
-      return new Response(JSON.stringify({ error: "Question is required." }), {
-        status: 400,
-      });
+      return new Response(JSON.stringify({ error: "Question is required." }), { status: 400 });
     }
 
     if (REQUIRE_PHI_FILTER && containsPHI(question)) {
       return new Response(
         JSON.stringify({
-          error:
-            "Please remove PHI. This endpoint is not configured to accept PHI.",
+          error: "Please remove PHI. This endpoint is not configured to accept PHI.",
         }),
         { status: 400 }
       );
     }
 
-    // 1) Embed
+    // Embed ONLY the current question for retrieval (avoid history leakage)
     const embed = await openai.embeddings.create({
       model: "text-embedding-3-large",
       input: question,
     });
     const queryVec = embed.data[0].embedding;
 
-    // 2) Search
+    // Vector search
     const results = await qdrant.search(COLLECTION, {
       vector: queryVec,
       limit: 6,
     });
 
-    // 3) Context blocks with Level/Section/Title when available
+    // Build human-readable context blocks
     const contextBlocks = results
       .map((r, i) => {
-        const p = r?.payload || r?.point?.payload || {};
-        const L =
-          p.level ??
-          p?.metadata?.level ??
-          p?.meta?.level ??
-          "?";
-        const S =
-          p.section ??
-          p.module ??
-          p?.metadata?.section ??
-          p?.meta?.section ??
-          "?";
-        const title =
-          p.title ??
-          p?.metadata?.title ??
-          p?.meta?.title ??
-          "";
-        const tsStart = p.timestamp_start ?? "";
-        const tsEnd = p.timestamp_end ?? "";
-        const page = p.page ?? "";
-        const text = p.text ?? p.content ?? "";
-
-        const header = title
-          ? `Level ${L} section ${S} — ${title}`
-          : `Level ${L} section ${S}`;
-
-        return `#${i + 1} [${header} ${tsStart}${tsEnd ? "-" + tsEnd : ""} p.${page}]
-${text}`;
+        const p = r.payload || {};
+        const labelBits = [];
+        if (p.level) labelBits.push(`Level ${p.level}`);
+        if (p.section) labelBits.push(`section ${p.section}`);
+        const where = labelBits.length ? labelBits.join(" ") : "Source ?";
+        const pages =
+          p.page != null ? ` p.${p.page}` : p.pages ? ` p.${p.pages}` : "";
+        const time =
+          p.timestamp_start || p.timestamp_end
+            ? ` ${p.timestamp_start ?? ""}-${p.timestamp_end ?? ""}`
+            : "";
+        return `#${i + 1} [${where}${pages}${time}]\n${p.text ?? ""}`;
       })
       .join("\n\n");
 
-    // 4) Per-request CITATIONS (with titles when present)
-    const citList = buildCitations(results);
-    const citationsBlock = citList.length
-      ? citList.map((c) => `- ${c}`).join("\n")
-      : "(none)";
+    const citations = buildCitationsFromResults(results);
 
-    // 5) Compose
+    // Compose messages: system + limited history + current question with context
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
+      // history is used for tone/continuity; DO NOT add facts from it
+      ...history,
       {
         role: "user",
-        content: `Question:
+        content:
+`Question:
 ${question}
 
-Retrieved Context:
+Retrieved Context (KB only):
 ${contextBlocks}
 
-CITATIONS (only cite items from this list; do NOT add page numbers):
-${citationsBlock}
-
 Instructions:
-- Use ONLY the context above.
-- Follow the output format exactly.
-- If context is insufficient, use the required fallback line from the system prompt.`,
+- Use ONLY the retrieved context for facts.
+- You may use the prior conversation turns for phrasing and continuity, not for adding new facts.
+- Follow the output style from the system prompt.
+- If context is insufficient, use the exact fallback line from the system prompt.`,
       },
     ];
 
@@ -145,16 +167,25 @@ Instructions:
       temperature: 0.2,
     });
 
-    const answer = completion.choices?.[0]?.message?.content || "";
+    let answer = completion.choices?.[0]?.message?.content || "";
 
-    return new Response(JSON.stringify({ answer }), {
+    // Attach friendly citations if we found any
+    if (citations.length) {
+      const lines = [
+        "",
+        "Where this lives in SSC",
+        ...citations.slice(0, 4).map((c) => `• ${c}`),
+        "You can also browse the SSC Library here: https://www.spencerstudyclub.com/library",
+      ];
+      answer += "\n\n" + lines.join("\n");
+    }
+
+    return new Response(JSON.stringify({ answer, citations }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
     console.error(err);
-    return new Response(JSON.stringify({ error: "Server error." }), {
-      status: 500,
-    });
+    return new Response(JSON.stringify({ error: "Server error." }), { status: 500 });
   }
 }
