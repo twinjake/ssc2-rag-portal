@@ -1,262 +1,542 @@
 "use client";
 
 import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { marked } from "marked";
 
-const BG = "#212121";
-const CARD = "#181818";
-
-const STORAGE_KEY = "ssc2_chat_history_v1"; // localStorage key
+// ----- NEW: simple localStorage persistence for short-term memory -----
+const STORAGE_KEY = "ssc2_chat_history_v1"; // saves last 10 messages (5 Q/A turns)
 
 export default function Home() {
+  const [messages, setMessages] = useState([]);
   const [q, setQ] = useState("");
-  const [messages, setMessages] = useState([]); // {role:"user"|"assistant", content:string}[]
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const listRef = useRef(null);
+  const [listening, setListening] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
-  // Restore last convo from localStorage (up to 10 messages = 5 turns)
+  const inputRef = useRef(null);
+  const endRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+
+    const apply = () => {
+      const mobile = window.innerWidth <= 768;
+      setIsMobile(mobile);
+
+      html.style.background = "#212121";
+      body.style.background = "#212121";
+      body.style.color = "#EAEAEA";
+      body.style.margin = "0";
+      body.style.minHeight = "100vh";
+      html.style.overflowX = "hidden";
+      body.style.overflowX = "hidden";
+
+      const allowScroll = loading || messages.length > 0;
+      if (mobile) {
+        html.style.overflowY = allowScroll ? "" : "hidden";
+        body.style.overflowY = allowScroll ? "" : "hidden";
+      } else {
+        html.style.overflowY = "";
+        body.style.overflowY = "";
+      }
+    };
+
+    apply();
+    const onResize = () => apply();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [loading, messages.length]);
+
+  // ----- NEW: set up voice input (unchanged behavior) -----
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+    if (!SR) return;
+
+    const rec = new SR();
+    rec.continuous = false;
+    rec.interimResults = true;
+    rec.lang = "en-US";
+
+    rec.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const txt = e.results[i][0].transcript;
+        if (e.results[i].isFinal) setQ((prev) => (prev ? prev + " " : "") + txt);
+        else interim += txt;
+      }
+      if (inputRef.current) inputRef.current.placeholder = interim ? `🎤 ${interim}` : "Ask anything…";
+    };
+
+    rec.onend = () => setListening(false);
+    recognitionRef.current = rec;
+  }, []);
+
+  function toggleMic() {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+    if (listening) {
+      rec.stop();
+      setListening(false);
+    } else {
+      setError("");
+      rec.start();
+      setListening(true);
+    }
+  }
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length, loading]);
+
+  // ----- NEW: restore last 10 messages on load -----
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          setMessages(parsed.slice(-10));
-        }
+        if (Array.isArray(parsed)) setMessages(parsed.slice(-10));
       }
     } catch {}
   }, []);
 
-  // Persist on change
+  // ----- NEW: persist last 10 messages whenever they change -----
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-10)));
     } catch {}
   }, [messages]);
 
-  // Scroll to bottom on new messages
-  useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, loading]);
+  async function sendMessage(text) {
+    const content = (text ?? q).trim();
+    if (!content || loading) return;
 
-  const recentHistoryForAPI = useMemo(() => {
-    // send last 5 turns (10 messages)
-    return messages.slice(-10);
-  }, [messages]);
-
-  async function ask(e) {
-    e.preventDefault();
-    if (!q.trim()) return;
     setError("");
+
+    const userMsg = { id: crypto.randomUUID(), role: "user", content };
+    setMessages((prev) => [...prev, userMsg]);
+
+    const pendingMsg = { id: "pending", role: "pending", content: "" };
+    setMessages((prev) => [...prev, pendingMsg]);
+    setQ("");
     setLoading(true);
 
-    // Show the user message immediately
-    const nextMessages = [...messages, { role: "user", content: q.trim() }];
-    setMessages(nextMessages);
-    setQ("");
-
     try {
+      // ----- NEW: include last 5 Q/A turns as "history" for the API -----
+      const history = messages
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .slice(-10) // last 10 messages = 5 turns
+        .map(({ role, content }) => ({ role, content }));
+
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: q.trim(),
-          history: recentHistoryForAPI,
-        }),
+        body: JSON.stringify({ question: content, history }),
       });
       if (!res.ok) {
         const problem = await res.json().catch(() => ({}));
         throw new Error(problem?.error || "Something went wrong.");
       }
       const data = await res.json();
-      const a = data.answer || "";
+      const answer = data.answer || "";
 
-      setMessages((prev) => [...prev, { role: "assistant", content: a }]);
+      setMessages((prev) => {
+        const withoutPending = prev.filter((m) => m.id !== "pending");
+        return [...withoutPending, { id: crypto.randomUUID(), role: "assistant", content: answer }];
+      });
     } catch (err) {
-      setError(err.message || "Request failed.");
+      setMessages((prev) => prev.filter((m) => m.id !== "pending"));
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   }
 
+  async function onSubmit(e) {
+    e?.preventDefault?.();
+    sendMessage(q);
+  }
+
+  const suggestions = [
+    "Does a Farrar style night guard hold the jaw forward at night?",
+    "I have a patient who, after TMJ treatment, is only hitting on their back teeth. What do I do?",
+    "Do you have a prefered sleep appliance for patients with dentures?",
+    "What's the difference between a reducing disc displacement and a non-reducing disc displacement?",
+  ];
+
+  const UserBubble = ({ children }) => (
+    <div style={{ display: "flex", justifyContent: "flex-end", margin: "8px 0" }}>
+      <div
+        style={{
+          maxWidth: 760,
+          background: "#2A2A2A",
+          border: "1px solid #3A3A3A",
+          color: "#EAEAEA",
+          padding: "10px 12px",
+          borderRadius: 12,
+          borderTopRightRadius: 4,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          overflowWrap: "anywhere",
+          fontFamily: "inherit",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+
+  const AssistantBubble = ({ children }) => (
+    <div style={{ display: "flex", gap: 10, margin: "10px 0" }}>
+      <img
+        src="/dr-spencer.jpg"
+        alt="Dr. Spencer"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          border: "1px solid #424242",
+          objectFit: "cover",
+          marginTop: 2,
+          flexShrink: 0,
+        }}
+      />
+      <div
+        style={{
+          maxWidth: 760,
+          background: "#181818",
+          border: "1px solid #2A2A2A",
+          color: "#EAEAEA",
+          padding: "12px 14px",
+          borderRadius: 12,
+          borderTopLeftRadius: 4,
+          wordBreak: "break-word",
+          overflowWrap: "anywhere",
+          fontFamily: "inherit",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+
+  const PendingBubble = () => (
+    <div style={{ display: "flex", gap: 10, margin: "10px 0", alignItems: "center" }}>
+      <img
+        src="/dr-spencer.jpg"
+        alt="Dr. Spencer"
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          border: "1px solid #424242",
+          objectFit: "cover",
+          flexShrink: 0,
+        }}
+      />
+      <div style={{ background: "#181818", border: "1px solid #2A2A2A", padding: "10px 12px", borderRadius: 12, fontFamily: "inherit" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#BDBDBD" }}>
+          <svg width="24" height="24" viewBox="0 0 50 50">
+            <circle cx="25" cy="25" r="20" stroke="#90CAF9" strokeWidth="4" fill="none" strokeLinecap="round">
+              <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.9s" repeatCount="indefinite" />
+            </circle>
+          </svg>
+          Thinking…
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <main
       style={{
+        background: "#212121",
         minHeight: "100vh",
-        background: BG,
-        color: "#e6e6e6",
-        display: "grid",
-        gridTemplateRows: "auto 1fr auto",
+        color: "#EAEAEA",
+        display: "flex",
+        flexDirection: "column",
+        overflowX: "hidden",
       }}
     >
-      {/* Header */}
       <SignedOut>
-        <div style={{ textAlign: "center", padding: 24 }}>
-          <h1>SSC 2.0 – Doctor Portal</h1>
-          <p><a href="/sign-in">Sign in</a> to continue.</p>
+        <div style={{ flex: 1, display: "grid", placeItems: "center", textAlign: "center", padding: 24 }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 48, fontWeight: 800 }}>SSC 2.0 – Doctor Portal</h1>
+            <p style={{ color: "#BDBDBD" }}>
+              Please sign in to continue.&nbsp;&nbsp;
+              <a href="/sign-in" style={{ color: "#90CAF9" }}>
+                Go to Sign In
+              </a>
+            </p>
+          </div>
         </div>
       </SignedOut>
 
       <SignedIn>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "18px 20px",
-            maxWidth: 1100,
-            margin: "0 auto",
-            width: "100%",
-          }}
-        >
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <img
-                src="/dr-spencer.jpg"
-                alt="Dr. Spencer"
-                width={40}
-                height={40}
-                style={{ borderRadius: "50%" }}
-              />
-              <small style={{ color: "#bdbdbd" }}>Ask Dr. Spencer</small>
-            </div>
-            <h1 style={{ margin: "6px 0 0 0" }}>SSC 2.0 – Doctor Portal</h1>
-            <p style={{ marginTop: 10, color: "#cfcfcf", maxWidth: 880 }}>
-              Ask Dr. Spencer is your Spencer Study Club powered assistant: a virtual Jamison if you will!
-              Answering your sleep apnea and TMJ/TMD questions with clear, practical points right from the SSC modules. What’s your question?
-            </p>
-          </div>
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 10 }}>
           <UserButton />
         </div>
 
-        {/* Conversation area */}
-        <div
-          ref={listRef}
+        {/* ----- CHANGED: header block only (image now 100px and centered above title) ----- */}
+        <section
           style={{
             maxWidth: 900,
             width: "100%",
             margin: "0 auto",
-            padding: "0 20px 120px",
-            overflowY: "auto",
+            padding: "96px 16px 12px",
+            textAlign: "center",
+            boxSizing: "border-box",
           }}
         >
-          {messages.length === 0 && (
-            <div style={{ textAlign: "center", color: "#bdbdbd", marginTop: 20 }}>
-              Start with a question, or tap a suggested prompt above.
-            </div>
-          )}
-
-          {messages.map((m, idx) => (
-            <div
-              key={idx}
+          <div
+            style={{
+              display: "grid",
+              justifyItems: "center",
+              alignItems: "center",
+              marginBottom: 8,
+              rowGap: 10,
+            }}
+          >
+            <img
+              src="/dr-spencer.jpg"
+              alt="Dr. Spencer"
               style={{
-                display: "flex",
-                justifyContent: m.role === "user" ? "flex-end" : "flex-start",
-                margin: "12px 0",
+                width: 100,
+                height: 100,
+                borderRadius: "50%",
+                objectFit: "cover",
+                border: "1px solid #424242",
               }}
-            >
-              <div
+            />
+            <div style={{ textAlign: "center", maxWidth: "100%" }}>
+              <div style={{ fontSize: 14, color: "#BDBDBD" }}>Ask Dr. Spencer</div>
+              <h1
                 style={{
-                  background: m.role === "user" ? "#2a2a2a" : CARD,
-                  border: "1px solid #333",
-                  borderRadius: 16,
-                  padding: "12px 14px",
-                  maxWidth: "85%",
-                  whiteSpace: "pre-wrap",
+                  margin: 0,
+                  fontSize: 42,
+                  fontWeight: 800,
+                  letterSpacing: 0.2,
+                  lineHeight: 1.1,
+                  wordBreak: "break-word",
+                  fontFamily: "inherit",
                 }}
               >
-                {m.content}
-              </div>
+                SSC 2.0 – Doctor Portal
+              </h1>
             </div>
-          ))}
+          </div>
 
-          {loading && (
-            <div style={{ display: "grid", placeItems: "center", padding: "24px 0" }}>
-              <div
-                aria-label="Thinking…"
-                style={{
-                  width: 28,
-                  height: 28,
-                  border: "3px solid #2f2f2f",
-                  borderTopColor: "#0ea5e9",
-                  borderRadius: "50%",
-                  animation: "spin 0.9s linear infinite",
-                }}
-              />
-              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <p
+            style={{
+              margin: "8px auto 0",
+              maxWidth: 820,
+              color: "#D0D0D0",
+              lineHeight: 1.6,
+              fontSize: 18,
+              padding: "0 4px",
+              wordBreak: "break-word",
+              overflowWrap: "anywhere",
+              fontFamily: "inherit",
+            }}
+          >
+            Ask Dr. Spencer is your Spencer Study Club powered assistant: a virtual Jamison if you will.
+            Answering your sleep apnea and TMJ/TMD questions with clear, practical points right from the
+            SSC modules. What’s your question?
+          </p>
+
+          {messages.length === 0 && (
+            <div
+              style={{
+                marginTop: 20,
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "center",
+                gap: 12,
+                padding: "0 8px",
+              }}
+            >
+              {[
+                "Does a Farrar style night guard hold the jaw forward at night?",
+                "I have a patient who, after TMJ treatment, is only hitting on their back teeth. What do I do?",
+                "Do you have a prefered sleep appliance for patients with dentures?",
+                "What's the difference between a reducing disc displacement and a non-reducing disc displacement?",
+              ].map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => !loading && sendMessage(s)}
+                  style={{
+                    background: "#2A2A2A",
+                    border: "1px solid #3A3A3A",
+                    color: "#DADADA",
+                    borderRadius: 20,
+                    padding: "12px 14px",
+                    cursor: loading ? "not-allowed" : "pointer",
+                    fontSize: 14,
+                    opacity: loading ? 0.7 : 1,
+                    maxWidth: "100%",
+                    whiteSpace: "normal",
+                    textAlign: "center",
+                    boxSizing: "border-box",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
             </div>
           )}
+        </section>
 
+        <section
+          style={{
+            maxWidth: 900,
+            width: "100%",
+            margin: "0 auto",
+            padding: "8px 16px 140px",
+            boxSizing: "border-box",
+            overflowX: "hidden",
+          }}
+        >
           {error && (
-            <div style={{ marginTop: 12, color: "#ffb4b4" }}>
+            <div
+              style={{
+                margin: "12px auto",
+                maxWidth: 900,
+                color: "#FF8A80",
+                background: "#2b1f1f",
+                border: "1px solid #4a2a2a",
+                padding: 12,
+                borderRadius: 10,
+                fontFamily: "inherit",
+              }}
+            >
               <b>Error:</b> {error}
             </div>
           )}
-        </div>
 
-        {/* Input bar fixed at bottom */}
+          {messages.map((m) =>
+            m.role === "user" ? (
+              <UserBubble key={m.id}>{m.content}</UserBubble>
+            ) : m.role === "assistant" ? (
+              <AssistantBubble key={m.id}>
+                <div
+                  style={{ color: "#EAEAEA", fontFamily: "inherit" }}
+                  dangerouslySetInnerHTML={{ __html: marked.parse(m.content || "") }}
+                />
+              </AssistantBubble>
+            ) : (
+              <PendingBubble key={m.id} />
+            )
+          )}
+
+          <div ref={endRef} style={{ height: 1 }} />
+        </section>
+
         <form
-          onSubmit={ask}
+          onSubmit={onSubmit}
           style={{
             position: "fixed",
             left: 0,
             right: 0,
             bottom: 0,
-            background: "linear-gradient(180deg, rgba(33,33,33,0) 0%, #212121 30%)",
-            padding: "18px 10px 16px",
-            display: "grid",
-            justifyItems: "center",
+            padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 24px)",
+            background: "linear-gradient(180deg, rgba(33,33,33,0) 0%, rgba(33,33,33,0.85) 30%, #212121 65%)",
+            display: "flex",
+            justifyContent: "center",
+            zIndex: 9,
+            overflowX: "hidden",
           }}
         >
           <div
             style={{
-              maxWidth: 1100,
+              maxWidth: 900,
               width: "100%",
               display: "grid",
-              gridTemplateColumns: "1fr auto",
-              gap: 10,
+              gridTemplateColumns: "48px 1fr 48px",
               alignItems: "center",
+              gap: 8,
+              background: "#2A2A2A",
+              border: "1px solid #3A3A3A",
+              borderRadius: 28,
+              padding: "6px 8px",
+              boxSizing: "border-box",
+              fontFamily: "inherit",
             }}
           >
+            <button
+              type="button"
+              onClick={toggleMic}
+              title="Voice input"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                border: "none",
+                background: listening ? "#3949AB" : "transparent",
+                cursor: "pointer",
+                display: "grid",
+                placeItems: "center",
+                color: listening ? "#EAEAEA" : "#BDBDBD",
+                fontFamily: "inherit",
+              }}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 14 0h-2zM11 19h2v3h-2z" />
+              </svg>
+            </button>
+
             <textarea
+              ref={inputRef}
               rows={1}
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Ask anything…"
               style={{
                 resize: "none",
-                width: "100%",
-                padding: "14px 16px",
-                borderRadius: 999,
-                border: "1px solid #3a3a3a",
-                background: "#2a2a2a",
-                color: "#eaeaea",
+                background: "transparent",
+                border: "none",
                 outline: "none",
+                color: "#EAEAEA",
+                padding: "10px 6px",
+                fontSize: 16,
+                lineHeight: 1.4,
+                maxHeight: 140,
+                overflowX: "hidden",
+                fontFamily: "inherit",
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  if (!loading) ask(e);
+                  sendMessage(q);
                 }
               }}
             />
+
             <button
               type="submit"
               disabled={loading || !q.trim()}
-              aria-label="Send"
+              title="Send"
               style={{
-                width: 42,
-                height: 42,
-                borderRadius: "50%",
-                border: "1px solid #0ea5e9",
-                background: loading ? "#214a5b" : "#0ea5e9",
-                color: "#001018",
-                fontWeight: 700,
-                cursor: loading ? "not-allowed" : "pointer",
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                border: "none",
+                background: loading || !q.trim() ? "#37474F" : "#1976D2",
+                cursor: loading || !q.trim() ? "not-allowed" : "pointer",
+                display: "grid",
+                placeItems: "center",
+                color: "#fff",
+                transition: "background 0.2s",
+                fontFamily: "inherit",
               }}
             >
-              ➤
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ transform: "translateX(1px)" }}>
+                <path d="M2 21l21-9L2 3v7l15 2-15 2v7z" />
+              </svg>
             </button>
           </div>
         </form>
