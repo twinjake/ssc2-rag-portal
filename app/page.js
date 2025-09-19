@@ -14,10 +14,38 @@ export default function Home() {
   const [error, setError] = useState("");
   const [listening, setListening] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [topic, setTopic] = useState("both");
 
   const inputRef = useRef(null);
   const endRef = useRef(null);
   const recognitionRef = useRef(null);
+
+  // Helper: post-process assistant text
+  // - If it contains the "great question / FB group" fallback, show ONLY that block.
+  // - Otherwise, clean any older library lines and append the standardized library link.
+  function formatAssistantHTML(text) {
+    const raw = text || "";
+
+    const fallbackRe = /that's a great question\.[\s\S]*?facebook group\./i;
+    const fallbackMatch = raw.match(fallbackRe);
+    if (fallbackMatch) {
+      return marked.parse(fallbackMatch[0].trim());
+    }
+
+    const base = raw
+      .replace(/You can\s+also\s+browse the SSC Library here:\s*https?:\/\/\S+/gi, "")
+      .replace(/You can\s+browse the SSC Library here:\s*https?:\/\/\S+/gi, "")
+      .replace(/You can\s+browse the SSC Library HERE/gi, "")
+      .replace(/Visit the SSC Library HERE/gi, "");
+
+    const footer =
+      '\n\nVisit the SSC Library ' +
+      '<a href="https://www.spencerstudyclub.com/library" target="_blank" rel="noopener">' +
+      // color changed to match "Both" button (#1976D2)
+      '<strong style="color:#1976D2;text-decoration:underline">HERE</strong></a>';
+
+    return marked.parse(base + footer);
+  }
 
   useEffect(() => {
     const html = document.documentElement;
@@ -113,11 +141,19 @@ export default function Home() {
 
   async function sendMessage(text) {
     const content = (text ?? q).trim();
+    const suffix =
+      topic === "tmd"
+        ? "This question is TMD/TMJ related"
+        : topic === "sleep"
+        ? "This question is Sleep Apnea related"
+        : ""; // BOTH => no additional prompt
+    const augmented = (content + (suffix ? " " + suffix : "")).trim();
     if (!content || loading) return;
 
     setError("");
 
-    const userMsg = { id: crypto.randomUUID(), role: "user", content };
+    // Store user-visible content + hidden augmented field
+    const userMsg = { id: crypto.randomUUID(), role: "user", content, augmented };
     setMessages((prev) => [...prev, userMsg]);
 
     const pendingMsg = { id: "pending", role: "pending", content: "" };
@@ -126,16 +162,19 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // ----- NEW: include last 5 Q/A turns as "history" for the API -----
+      // Use augmented text for prior user turns if present
       const history = messages
         .filter((m) => m.role === "user" || m.role === "assistant")
-        .slice(-10) // last 10 messages = 5 turns
-        .map(({ role, content }) => ({ role, content }));
+        .slice(-10)
+        .map((m) => ({
+          role: m.role,
+          content: m.role === "user" ? (m.augmented || m.content) : m.content,
+        }));
 
       const res = await fetch("/api/query", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: content, history }),
+        body: JSON.stringify({ question: augmented, history }),
       });
       if (!res.ok) {
         const problem = await res.json().catch(() => ({}));
@@ -425,7 +464,7 @@ export default function Home() {
               <AssistantBubble key={m.id}>
                 <div
                   style={{ color: "#EAEAEA", fontFamily: "inherit" }}
-                  dangerouslySetInnerHTML={{ __html: marked.parse(m.content || "") }}
+                  dangerouslySetInnerHTML={{ __html: formatAssistantHTML(m.content) }}
                 />
               </AssistantBubble>
             ) : (
@@ -446,11 +485,61 @@ export default function Home() {
             padding: "16px 16px calc(env(safe-area-inset-bottom, 0px) + 24px)",
             background: "linear-gradient(180deg, rgba(33,33,33,0) 0%, rgba(33,33,33,0.85) 30%, #212121 65%)",
             display: "flex",
-            justifyContent: "center",
+            flexDirection: "column",
+            alignItems: "center",
             zIndex: 9,
             overflowX: "hidden",
           }}
         >
+          {/* Topic selector (segmented iOS-style) */}
+          <div style={{
+            width: "100%",
+            maxWidth: 900,
+            margin: "0 auto 10px",
+            display: "grid",
+            gap: 8,
+            justifyItems: "center",
+            boxSizing: "border-box"
+          }}>
+            <div role="radiogroup" aria-label="Question topic"
+                 style={{
+                   display: "flex",
+                   background: "#2A2A2A",
+                   border: "1px solid #3A3A3A",
+                   borderRadius: 9999,
+                   padding: 4,
+                   gap: 4
+                 }}>
+              {(["tmd","sleep","both"]).map((key) => {
+                const label = key === "tmd" ? "TMD" : key === "sleep" ? "Sleep Apnea" : "Both";
+                const selected = topic === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setTopic(key)}
+                    style={{
+                      cursor: "pointer",
+                      border: "none",
+                      outline: "none",
+                      padding: "8px 14px",
+                      borderRadius: 9999,
+                      background: selected ? "#1976D2" : "transparent",
+                      color: selected ? "#FFFFFF" : "#E0E0E0",
+                      fontSize: 14,
+                      fontFamily: "inherit",
+                      transition: "background 0.2s, color 0.2s"
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <div
             style={{
               maxWidth: 900,
