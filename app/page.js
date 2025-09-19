@@ -121,15 +121,12 @@ export default function Home() {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, loading]);
 
-  // ----- NEW: restore last 10 messages on load -----
+  // ----- Reset chat on each reload -----
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setMessages(parsed.slice(-10));
-      }
+      localStorage.removeItem(STORAGE_KEY); // clear any previous chat
     } catch {}
+    setMessages([]); // ensure UI starts empty
   }, []);
 
   // ----- NEW: persist last 10 messages whenever they change -----
