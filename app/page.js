@@ -4,9 +4,6 @@ import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 import { useEffect, useRef, useState } from "react";
 import { marked } from "marked";
 
-// ----- NEW: simple localStorage persistence for short-term memory -----
-const STORAGE_KEY = "ssc2_chat_history_v1"; // saves last 10 messages (5 Q/A turns)
-
 export default function Home() {
   const [messages, setMessages] = useState([]);
   const [q, setQ] = useState("");
@@ -22,8 +19,9 @@ export default function Home() {
 
   // Helper: post-process assistant text
   // - If it contains the "great question / FB group" fallback, show ONLY that block.
-  // - Otherwise, clean any older library lines and append the standardized library link.
-  function formatAssistantHTML(text) {
+  // - Otherwise, optional follow-up "conversationalize" pass that strips rigid section headers.
+  // - Then clean any older library lines and append the standardized library link.
+  function formatAssistantHTML(text, { isFollowup = false } = {}) {
     const raw = text || "";
 
     const fallbackRe = /that's a great question\.[\s\S]*?facebook group\./i;
@@ -32,7 +30,30 @@ export default function Home() {
       return marked.parse(fallbackMatch[0].trim());
     }
 
-    const base = raw
+    let body = raw;
+    if (isFollowup) {
+      const headingWords = [
+        "Summary",
+        "What matters",
+        "How I think about it",
+        "How I think about this",
+        "Actionable steps",
+        "Action steps",
+        "In short",
+        "Key points",
+        "TL;DR",
+      ];
+      const headingPattern =
+        String.raw`^\s{0,3}(?:#+\s*)?(?:\*\*|__)?(?:${headingWords
+          .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .join("|")})(?:\*\*|__)?\s*:?\s*$`;
+
+      body = body
+        .replace(new RegExp(headingPattern, "gim"), "")
+        .replace(/\n{3,}/g, "\n\n");
+    }
+
+    const cleaned = body
       .replace(/You can\s+also\s+browse the SSC Library here:\s*https?:\/\/\S+/gi, "")
       .replace(/You can\s+browse the SSC Library here:\s*https?:\/\/\S+/gi, "")
       .replace(/You can\s+browse the SSC Library HERE/gi, "")
@@ -41,10 +62,9 @@ export default function Home() {
     const footer =
       '\n\nVisit the SSC Library ' +
       '<a href="https://www.spencerstudyclub.com/library" target="_blank" rel="noopener">' +
-      // color changed to match "Both" button (#1976D2)
       '<strong style="color:#1976D2;text-decoration:underline">HERE</strong></a>';
 
-    return marked.parse(base + footer);
+    return marked.parse(cleaned + footer);
   }
 
   useEffect(() => {
@@ -79,7 +99,7 @@ export default function Home() {
     return () => window.removeEventListener("resize", onResize);
   }, [loading, messages.length]);
 
-  // ----- NEW: set up voice input (unchanged behavior) -----
+  // Voice input
   useEffect(() => {
     if (typeof window === "undefined") return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -121,20 +141,8 @@ export default function Home() {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, loading]);
 
-  // ----- Reset chat on each reload -----
-  useEffect(() => {
-    try {
-      localStorage.removeItem(STORAGE_KEY); // clear any previous chat
-    } catch {}
-    setMessages([]); // ensure UI starts empty
-  }, []);
-
-  // ----- NEW: persist last 10 messages whenever they change -----
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.slice(-10)));
-    } catch {}
-  }, [messages]);
+  // NOTE: No localStorage — memory is in-RAM only for the current session.
+  // Reloading the page resets the conversation.
 
   async function sendMessage(text) {
     const content = (text ?? q).trim();
@@ -149,7 +157,7 @@ export default function Home() {
 
     setError("");
 
-    // Store user-visible content + hidden augmented field
+    // Store user-visible content + hidden augmented field (in-memory only)
     const userMsg = { id: crypto.randomUUID(), role: "user", content, augmented };
     setMessages((prev) => [...prev, userMsg]);
 
@@ -159,7 +167,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // Use augmented text for prior user turns if present
+      // Use augmented text for prior user turns if present (from in-memory history)
       const history = messages
         .filter((m) => m.role === "user" || m.role === "assistant")
         .slice(-10)
@@ -250,7 +258,7 @@ export default function Home() {
           padding: "12px 14px",
           borderRadius: 12,
           borderTopLeftRadius: 4,
-          wordBreak: "break-word",
+          wordBreak: "word-break",
           overflowWrap: "anywhere",
           fontFamily: "inherit",
         }}
@@ -287,6 +295,9 @@ export default function Home() {
     </div>
   );
 
+  // We'll count assistant replies as we render so we know what's a follow-up.
+  let assistantRenderCount = 0;
+
   return (
     <main
       style={{
@@ -304,9 +315,7 @@ export default function Home() {
             <h1 style={{ margin: 0, fontSize: 48, fontWeight: 800 }}>SSC 2.0 – Doctor Portal</h1>
             <p style={{ color: "#BDBDBD" }}>
               Please sign in to continue.&nbsp;&nbsp;
-              <a href="/sign-in" style={{ color: "#90CAF9" }}>
-                Go to Sign In
-              </a>
+              <a href="/sign-in" style={{ color: "#90CAF9" }}>Go to Sign In</a>
             </p>
           </div>
         </div>
@@ -317,7 +326,7 @@ export default function Home() {
           <UserButton />
         </div>
 
-        {/* ----- CHANGED: header block only (image now 100px and centered above title) ----- */}
+        {/* Header */}
         <section
           style={{
             maxWidth: 900,
@@ -454,20 +463,23 @@ export default function Home() {
             </div>
           )}
 
-          {messages.map((m) =>
-            m.role === "user" ? (
-              <UserBubble key={m.id}>{m.content}</UserBubble>
-            ) : m.role === "assistant" ? (
-              <AssistantBubble key={m.id}>
-                <div
-                  style={{ color: "#EAEAEA", fontFamily: "inherit" }}
-                  dangerouslySetInnerHTML={{ __html: formatAssistantHTML(m.content) }}
-                />
-              </AssistantBubble>
-            ) : (
-              <PendingBubble key={m.id} />
-            )
-          )}
+          {messages.map((m) => {
+            if (m.role === "user") {
+              return <UserBubble key={m.id}>{m.content}</UserBubble>;
+            }
+            if (m.role === "assistant") {
+              const isFollowup = assistantRenderCount++ > 0; // first assistant = false, others = true
+              return (
+                <AssistantBubble key={m.id}>
+                  <div
+                    style={{ color: "#EAEAEA", fontFamily: "inherit" }}
+                    dangerouslySetInnerHTML={{ __html: formatAssistantHTML(m.content, { isFollowup }) }}
+                  />
+                </AssistantBubble>
+              );
+            }
+            return <PendingBubble key={m.id} />;
+          })}
 
           <div ref={endRef} style={{ height: 1 }} />
         </section>
@@ -489,31 +501,36 @@ export default function Home() {
           }}
         >
           {/* Topic selector (segmented iOS-style) */}
-          <div style={{
-            width: "100%",
-            maxWidth: 900,
-            margin: "0 auto 10px",
-            display: "grid",
-            gap: 8,
-            justifyItems: "center",
-            boxSizing: "border-box"
-          }}>
-            <div role="radiogroup" aria-label="Question topic"
-                 style={{
-                   display: "flex",
-                   background: "#2A2A2A",
-                   border: "1px solid #3A3A3A",
-                   borderRadius: 9999,
-                   padding: 4,
-                   gap: 4
-                 }}>
-              {(["tmd","sleep","both"]).map((key) => {
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 900,
+              margin: "0 auto 10px",
+              display: "grid",
+              gap: 8,
+              justifyItems: "center",
+              boxSizing: "border-box",
+            }}
+          >
+            <div
+              role="radiogroup"
+              aria-label="Question topic"
+              style={{
+                display: "flex",
+                background: "#2A2A2A",
+                border: "1px solid #3A3A3A",
+                borderRadius: 9999,
+                padding: 4,
+                gap: 4,
+              }}
+            >
+              {["tmd", "sleep", "both"].map((key) => {
                 const label = key === "tmd" ? "TMD" : key === "sleep" ? "Sleep Apnea" : "Both";
                 const selected = topic === key;
                 return (
                   <button
                     key={key}
-                    type="button"
+                    type="button" // prevent form submit on click
                     role="radio"
                     aria-checked={selected}
                     onClick={() => setTopic(key)}
@@ -527,7 +544,7 @@ export default function Home() {
                       color: selected ? "#FFFFFF" : "#E0E0E0",
                       fontSize: 14,
                       fontFamily: "inherit",
-                      transition: "background 0.2s, color 0.2s"
+                      transition: "background 0.2s, color 0.2s",
                     }}
                   >
                     {label}
