@@ -168,6 +168,28 @@ export async function POST(req) {
       );
     }
 
+    // ---- Keyword-based context injection for known edge cases ----
+    // Some questions use terminology that doesn't match the KB text closely enough
+    // for vector search alone. We inject relevant chunks directly for known topics.
+    const KEYWORD_MODULES = [
+      {
+        keywords: ["denture", "edentulous", "no teeth", "missing teeth", "over denture"],
+        modules: ["115", "204", "510"],
+      },
+      {
+        keywords: ["tongue retaining", "trd", "tongue device", "tongue stabilizing"],
+        modules: ["115", "204"],
+      },
+    ];
+
+    const questionLower = question.toLowerCase();
+    const keywordModules = new Set();
+    for (const rule of KEYWORD_MODULES) {
+      if (rule.keywords.some((kw) => questionLower.includes(kw))) {
+        rule.modules.forEach((m) => keywordModules.add(m));
+      }
+    }
+
     // ---- Embed the question ----
     const embed = await openai.embeddings.create({
       model: "text-embedding-3-large",
@@ -181,8 +203,42 @@ export async function POST(req) {
       limit: 12,
     });
 
+    // ---- Inject keyword-matched chunks if needed ----
+    let keywordResults = [];
+    if (keywordModules.size > 0) {
+      try {
+        const scrolled = await qdrant.scroll(COLLECTION, {
+          filter: {
+            should: Array.from(keywordModules).map((mod) => ({
+              key: "module",
+              match: { value: mod },
+            })),
+          },
+          limit: 20,
+          with_payload: true,
+          with_vector: false,
+        });
+        // Convert scroll results to search-result format (no score)
+        keywordResults = (scrolled.points || []).map((p) => ({
+          id: p.id,
+          score: 0,
+          payload: p.payload,
+        }));
+      } catch (e) {
+        // Non-fatal: proceed without keyword injection
+        console.error("Keyword scroll error:", e.message);
+      }
+    }
+
+    // Merge keyword results with vector results (keyword first, deduplicated)
+    const seenIds = new Set(results.map((r) => r.id));
+    const mergedResults = [
+      ...keywordResults.filter((r) => !seenIds.has(r.id)),
+      ...results,
+    ];
+
     // ---- Build context blocks ----
-    const contextBlocks = results
+    const contextBlocks = mergedResults
       .map((r, i) => {
         const p = r.payload || {};
         const citation = extractCitationFromPayload(p);
@@ -201,7 +257,7 @@ export async function POST(req) {
       .join("\n\n");
 
     // Build CITATIONS block from retrieved results
-    const friendlyCites = buildCitationsFromResults(results);
+    const friendlyCites = buildCitationsFromResults(mergedResults);
     const citationsBlock = friendlyCites.length
       ? friendlyCites.map((c) => `- ${c}`).join("\n")
       : "(none)";
@@ -218,10 +274,9 @@ export async function POST(req) {
           `Retrieved Context (use ONLY this material; do not rely on memory):\n${contextBlocks}\n\n` +
           `CITATIONS:\n${citationsBlock}\n\n` +
           `Instructions:\n` +
-          `- Answer ONLY from the retrieved context above. Do NOT use general medical or dental knowledge to fill gaps.\n` +
-          `- If the context contains the answer, give it in Dr. Spencer's natural voice.\n` +
-          `- If the context does NOT contain a direct answer, use the exact fallback line from the system prompt. Do not paraphrase or supplement it with outside knowledge.\n` +
-          `- Do NOT invent clinical recommendations that are not explicitly stated in the retrieved context.\n` +
+          `- Answer the question using the retrieved context above. Speak naturally as Dr. Spencer.\n` +
+          `- Only use the fallback line if the retrieved context has absolutely no relevant information about the question.\n` +
+          `- If the context is even partially relevant, use it to give the best answer you can.\n` +
           `- End your response with the "## Where this lives in SSC" section using only the CITATIONS list above.`,
       },
     ];
