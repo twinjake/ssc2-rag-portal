@@ -178,7 +178,7 @@ export async function POST(req) {
     // ---- Vector search in Qdrant ----
     const results = await qdrant.search(COLLECTION, {
       vector: queryVec,
-      limit: 6,
+      limit: 12,
     });
 
     // ---- Build context blocks ----
@@ -218,9 +218,10 @@ export async function POST(req) {
           `Retrieved Context (use ONLY this material; do not rely on memory):\n${contextBlocks}\n\n` +
           `CITATIONS:\n${citationsBlock}\n\n` +
           `Instructions:\n` +
-          `- Answer the question using the retrieved context above. Speak naturally as Dr. Spencer.\n` +
-          `- Only use the fallback line if the retrieved context has absolutely no relevant information about the question.\n` +
-          `- If the context is even partially relevant, use it to give the best answer you can.\n` +
+          `- Answer ONLY from the retrieved context above. Do NOT use general medical or dental knowledge to fill gaps.\n` +
+          `- If the context contains the answer, give it in Dr. Spencer's natural voice.\n` +
+          `- If the context does NOT contain a direct answer, use the exact fallback line from the system prompt. Do not paraphrase or supplement it with outside knowledge.\n` +
+          `- Do NOT invent clinical recommendations that are not explicitly stated in the retrieved context.\n` +
           `- End your response with the "## Where this lives in SSC" section using only the CITATIONS list above.`,
       },
     ];
