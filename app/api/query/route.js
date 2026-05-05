@@ -332,7 +332,9 @@ export async function POST(req) {
           `Retrieved Context (use ONLY this material; do not rely on general knowledge):\n${contextBlocks}\n\n` +
           `CITATIONS:\n${citationsBlock}\n\n` +
           `Instructions:\n` +
-          `- Answer the question using ONLY the retrieved context above. Speak naturally as Dr. Spencer.\n` +
+          `- The Retrieved Context above is Dr. Spencer's own written words from SSC modules. These are his exact phrases and sentences.\n` +
+          `- Pull his exact language directly from the context and weave it into your response. Do NOT paraphrase his words into generic clinical language.\n` +
+          `- If the context says something clearly, use that sentence or phrase. That IS the Dr. Spencer voice.\n` +
           `- Do NOT add information from general medical knowledge that is not in the context.\n` +
           `- Only use the fallback line if the retrieved context has absolutely no relevant information.\n` +
           `- If the context is even partially relevant, use it to give the best answer you can.\n` +
@@ -344,7 +346,7 @@ export async function POST(req) {
     const completion = await openai.chat.completions.create({
       model: "gpt-4o",
       messages,
-      temperature: 0.3,
+      temperature: 0.4,
     });
 
     const answer = completion.choices?.[0]?.message?.content || "";
