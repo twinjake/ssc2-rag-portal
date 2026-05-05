@@ -2,6 +2,7 @@
 import OpenAI from "openai";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { SYSTEM_PROMPT } from "../../../lib/prompt";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ const qdrant = new QdrantClient({
 });
 
 const COLLECTION = process.env.QDRANT_COLLECTION || "ssc2";
+const FREE_LIMIT = 3;
 
 // Toggle PHI check via env: APP_REQUIRE_PHI_FILTER=true
 const REQUIRE_PHI_FILTER =
@@ -20,13 +22,11 @@ const REQUIRE_PHI_FILTER =
 
 // ----------------- helpers -----------------
 function containsPHI(text) {
-  // trivial placeholder — keep or remove per your needs
   const rx =
     /(dob|mrn|ssn|social security|address|phone\s*:\s*\d|patient\s+name|full\s+name)/i;
   return rx.test(text || "");
 }
 
-// Try to pull "Level X section Y — Optional Title" from payload filename/fields
 function extractCitationFromPayload(payload = {}) {
   const candidates = [
     payload.source,
@@ -42,11 +42,9 @@ function extractCitationFromPayload(payload = {}) {
 
   if (!candidates.length) return null;
 
-  // e.g. "101- Anatomy Review Part 1" or "319- Regenerative TMD"
   const raw = candidates[0].split(/[\\/]/).pop();
   let base = raw.replace(/\.[^.]+$/, "");
 
-  // Match "XYZ- Title" where XYZ is 3 digits => Level X, Section YZ
   const m = base.match(/\b([1-4])([0-9]{2})\b\s*-\s*(.+)$/);
   if (m) {
     const level = Number(m[1]);
@@ -55,10 +53,7 @@ function extractCitationFromPayload(payload = {}) {
     return { level, section, title };
   }
 
-  // Fallbacks: "Level 2 section 5" / "L2 S5" / "205"
-  let level = null,
-    section = null;
-
+  let level = null, section = null;
   let m2 =
     base.match(/level\s*([1-9])\D*section\s*([0-9]{1,2})/i) ||
     base.match(/\bL\s*([1-9])\D*S\s*([0-9]{1,2})\b/i);
@@ -67,7 +62,7 @@ function extractCitationFromPayload(payload = {}) {
     level = Number(m2[1]);
     section = Number(m2[2]);
   } else {
-    const m3 = base.match(/\b([1-4])([0-9]{2})\b/); // e.g., 205/301
+    const m3 = base.match(/\b([1-4])([0-9]{2})\b/);
     if (m3) {
       level = Number(m3[1]);
       section = Number(m3[2].replace(/^0/, "")) || Number(m3[2]);
@@ -86,34 +81,27 @@ function extractCitationFromPayload(payload = {}) {
     .replace(/\s{2,}/g, " ");
 
   if (title) title = title.charAt(0).toUpperCase() + title.slice(1);
-
   return { level, section, title };
 }
 
 function buildCitationsFromResults(results = []) {
   const seen = new Set();
   const items = [];
-
   for (const r of results) {
     const payload = r?.payload || r;
     const c = extractCitationFromPayload(payload);
     if (!c) continue;
-
     const key = `L${c.level}-S${c.section}`;
     if (seen.has(key)) continue;
     seen.add(key);
-
     const label = c.title
       ? `Level ${c.level} section ${c.section} — ${c.title}`
       : `Level ${c.level} section ${c.section}`;
-
     items.push(label);
   }
-
   return items;
 }
 
-// Trim history payload for safety (size + roles)
 function sanitizeHistory(rawHistory) {
   if (!Array.isArray(rawHistory)) return [];
   const allowed = rawHistory
@@ -123,9 +111,8 @@ function sanitizeHistory(rawHistory) {
         (m.role === "user" || m.role === "assistant") &&
         typeof m.content === "string"
     )
-    .slice(-10); // last 5 turns (10 messages)
+    .slice(-10);
 
-  // soft token/char guard
   const MAX_CHARS = 8000;
   let total = 0;
   const clipped = [];
@@ -141,22 +128,41 @@ function sanitizeHistory(rawHistory) {
 // ----------------- handler -----------------
 export async function POST(req) {
   try {
+    // --- Auth check ---
+    const { userId } = await auth();
+    if (!userId) {
+      return new Response(JSON.stringify({ error: "Not authenticated." }), { status: 401 });
+    }
+
+    // --- Plan / usage check ---
+    const clerk = await clerkClient();
+    const user = await clerk.users.getUser(userId);
+    const meta = user.publicMetadata || {};
+    const plan = meta.plan || "free_trial";
+    const chatCount = Number(meta.chatCount) || 0;
+
+    if (plan === "free_trial" && chatCount >= FREE_LIMIT) {
+      return new Response(
+        JSON.stringify({
+          error: "free_limit_reached",
+          message: `You have used all ${FREE_LIMIT} free chats. Please subscribe to continue.`,
+        }),
+        { status: 402 }
+      );
+    }
+
     const body = await req.json();
     const question = (body?.question || "").trim();
     const history = sanitizeHistory(body?.history);
 
     if (!question) {
-      return new Response(
-        JSON.stringify({ error: "Question is required." }),
-        { status: 400 }
-      );
+      return new Response(JSON.stringify({ error: "Question is required." }), { status: 400 });
     }
 
     if (REQUIRE_PHI_FILTER && containsPHI(question)) {
       return new Response(
         JSON.stringify({
-          error:
-            "Please remove PHI. This endpoint is not configured to accept PHI.",
+          error: "Please remove PHI. This endpoint is not configured to accept PHI.",
         }),
         { status: 400 }
       );
@@ -175,42 +181,30 @@ export async function POST(req) {
       limit: 6,
     });
 
-    // ---- Build context blocks (what the model is allowed to use) ----
+    // ---- Build context blocks ----
     const contextBlocks = results
       .map((r, i) => {
         const p = r.payload || {};
-        // Try to expose level/section derived from filename
         const citation = extractCitationFromPayload(p);
         const header = citation
           ? `Level ${citation.level} section ${citation.section}${
               citation.title ? ` — ${citation.title}` : ""
             }`
           : `Level ${p.level ?? "?"} section ${p.module ?? "?"}`;
-
         const page = p.page ? ` p.${p.page}` : "";
         const ts =
           p.timestamp_start || p.timestamp_end
             ? ` ${p.timestamp_start ?? ""}-${p.timestamp_end ?? ""}`
             : "";
-
-        return `#${i + 1} [${header}${ts}${page}]
-${p.text ?? ""}`;
+        return `#${i + 1} [${header}${ts}${page}]\n${p.text ?? ""}`;
       })
       .join("\n\n");
 
-    // ---- Conversational history (for continuity only) ----
-    // We feed it as prior turns; SYSTEM_PROMPT still forbids using anything beyond provided context.
-    const priorTurns = history.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const priorTurns = history.map((m) => ({ role: m.role, content: m.content }));
 
-    // ---- Compose final messages ----
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
-      // prior chat (user/assistant pairs), most recent last
       ...priorTurns,
-      // current user question with explicit context bundle
       {
         role: "user",
         content:
@@ -232,7 +226,6 @@ ${p.text ?? ""}`;
 
     let answer = completion.choices?.[0]?.message?.content || "";
 
-    // (Optional) Append conversational citations in a friendly way
     const friendlyCites = buildCitationsFromResults(results);
     if (friendlyCites.length) {
       const list = friendlyCites.map((c) => `- ${c}`).join("\n");
@@ -242,14 +235,36 @@ ${p.text ?? ""}`;
         `You can browse the SSC Library here: https://www.spencerstudyclub.com/library`;
     }
 
+    // ---- Increment chat count (only for free_trial users) ----
+    if (plan === "free_trial") {
+      const newCount = chatCount + 1;
+      const lastChat = new Date().toISOString();
+      await clerk.users.updateUserMetadata(userId, {
+        publicMetadata: {
+          ...meta,
+          chatCount: newCount,
+          lastChat,
+        },
+      });
+    } else {
+      // For paid/comped, still track usage for admin visibility
+      const newCount = chatCount + 1;
+      const lastChat = new Date().toISOString();
+      await clerk.users.updateUserMetadata(userId, {
+        publicMetadata: {
+          ...meta,
+          chatCount: newCount,
+          lastChat,
+        },
+      });
+    }
+
     return new Response(JSON.stringify({ answer }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
     console.error(err);
-    return new Response(JSON.stringify({ error: "Server error." }), {
-      status: 500,
-    });
+    return new Response(JSON.stringify({ error: "Server error." }), { status: 500 });
   }
 }
