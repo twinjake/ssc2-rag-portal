@@ -6,7 +6,6 @@ import { marked } from "marked";
 
 const FREE_LIMIT = 3;
 const SESSIONS_KEY = "ssc2_sessions_v1";
-const ACTIVE_KEY = "ssc2_active_session_v1";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -72,21 +71,180 @@ const AssistantBubble = ({ children }) => (
   </div>
 );
 
+// Animated thinking bubble with pulsing dots
 const PendingBubble = () => (
-  <div style={{ display: "flex", gap: 10, margin: "10px 0", alignItems: "center" }}>
-    <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid #424242", objectFit: "cover", flexShrink: 0 }} />
-    <div style={{ background: "#181818", border: "1px solid #2A2A2A", padding: "10px 14px", borderRadius: 14, fontFamily: "inherit" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#BDBDBD" }}>
-        <svg width="22" height="22" viewBox="0 0 50 50">
-          <circle cx="25" cy="25" r="20" stroke="#90CAF9" strokeWidth="4" fill="none" strokeLinecap="round">
-            <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.9s" repeatCount="indefinite" />
-          </circle>
-        </svg>
-        Thinking…
+  <div style={{ display: "flex", gap: 10, margin: "10px 0", alignItems: "flex-start" }}>
+    <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid #424242", objectFit: "cover", flexShrink: 0, marginTop: 2 }} />
+    <div style={{ background: "#181818", border: "1px solid #2A2A2A", padding: "14px 18px", borderRadius: 14, borderTopLeftRadius: 4, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 12 }}>
+      {/* Spinning arc */}
+      <svg width="20" height="20" viewBox="0 0 40 40" style={{ flexShrink: 0 }}>
+        <circle cx="20" cy="20" r="15" stroke="#2a2a2a" strokeWidth="3.5" fill="none" />
+        <circle cx="20" cy="20" r="15" stroke="#90CAF9" strokeWidth="3.5" fill="none"
+          strokeLinecap="round" strokeDasharray="60 36"
+          style={{ transformOrigin: "center", animation: "ssc-spin 0.85s linear infinite" }} />
+      </svg>
+      {/* Pulsing dots */}
+      <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+        {[0, 1, 2].map((i) => (
+          <span key={i} style={{
+            width: 7, height: 7, borderRadius: "50%", background: "#90CAF9", display: "block",
+            animation: `ssc-pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+          }} />
+        ))}
       </div>
+      <span style={{ color: "#9E9E9E", fontSize: 14 }}>Thinking…</span>
+    </div>
+    <style>{`
+      @keyframes ssc-spin { to { transform: rotate(360deg); } }
+      @keyframes ssc-pulse {
+        0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+        40% { transform: scale(1); opacity: 1; }
+      }
+    `}</style>
+  </div>
+);
+
+// Streaming bubble — renders markdown as text streams in
+const StreamingBubble = ({ text }) => (
+  <div style={{ display: "flex", gap: 10, margin: "10px 0" }}>
+    <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid #424242", objectFit: "cover", marginTop: 2, flexShrink: 0 }} />
+    <div style={{ maxWidth: 720, background: "#181818", border: "1px solid #2A2A2A", color: "#EAEAEA", padding: "12px 16px", borderRadius: 14, borderTopLeftRadius: 4, wordBreak: "break-word", overflowWrap: "anywhere", fontFamily: "inherit", fontSize: 15 }}>
+      <div style={{ color: "#EAEAEA", fontFamily: "inherit" }} dangerouslySetInnerHTML={{ __html: formatAssistantHTML(text) }} />
+      <span style={{ display: "inline-block", width: 2, height: "1em", background: "#90CAF9", marginLeft: 2, verticalAlign: "text-bottom", animation: "ssc-blink 0.8s step-end infinite" }} />
+      <style>{`@keyframes ssc-blink { 0%,100%{opacity:1} 50%{opacity:0} }`}</style>
     </div>
   </div>
 );
+
+// ─── landing page ──────────────────────────────────────────────────────────
+
+function LandingPage() {
+  return (
+    <div style={{ background: "#0f0f0f", minHeight: "100vh", color: "#EAEAEA", fontFamily: "system-ui, -apple-system, sans-serif", overflowX: "hidden" }}>
+      <style>{`
+        @keyframes lp-fade-up { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes lp-pulse-ring { 0%,100% { box-shadow: 0 0 0 0 rgba(25,118,210,0.4); } 50% { box-shadow: 0 0 0 16px rgba(25,118,210,0); } }
+        .lp-hero-btn:hover { background: #1565C0 !important; transform: translateY(-1px); }
+        .lp-card:hover { border-color: #1976D2 !important; transform: translateY(-3px); }
+        .lp-nav-link:hover { color: #90CAF9 !important; }
+      `}</style>
+
+      {/* Nav */}
+      <nav style={{ position: "sticky", top: 0, zIndex: 100, background: "rgba(15,15,15,0.92)", backdropFilter: "blur(12px)", borderBottom: "1px solid #1e1e1e", padding: "0 24px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover", border: "2px solid #1976D2" }} />
+            <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: 0.3 }}>Ask Dr. Spencer</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+            <a href="/pricing" className="lp-nav-link" style={{ color: "#aaa", textDecoration: "none", fontSize: 14, transition: "color 0.2s" }}>Pricing</a>
+            <a href="/sign-in" style={{ padding: "8px 20px", background: "#1976D2", color: "#fff", borderRadius: 999, fontSize: 14, fontWeight: 600, textDecoration: "none", transition: "background 0.2s" }}>Sign In</a>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero */}
+      <section style={{ maxWidth: 860, margin: "0 auto", padding: "80px 24px 60px", textAlign: "center", animation: "lp-fade-up 0.7s ease both" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#1a2a3a", border: "1px solid #1976D244", borderRadius: 999, padding: "6px 16px", fontSize: 13, color: "#90CAF9", marginBottom: 28 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4CAF50", display: "inline-block", animation: "lp-pulse-ring 2s ease infinite" }} />
+          Powered by Spencer Study Club
+        </div>
+        <div style={{ marginBottom: 28, display: "flex", justifyContent: "center" }}>
+          <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 100, height: 100, borderRadius: "50%", objectFit: "cover", border: "3px solid #1976D2", boxShadow: "0 0 0 6px rgba(25,118,210,0.15)" }} />
+        </div>
+        <h1 style={{ margin: "0 0 20px", fontSize: "clamp(36px, 6vw, 64px)", fontWeight: 900, lineHeight: 1.1, letterSpacing: -1 }}>
+          Get answers from<br />
+          <span style={{ color: "#1976D2" }}>Dr. Spencer</span> — instantly.
+        </h1>
+        <p style={{ margin: "0 auto 36px", maxWidth: 640, fontSize: 18, color: "#BDBDBD", lineHeight: 1.7 }}>
+          Ask Dr. Spencer is your AI-powered study partner built on the full Spencer Study Club library. Ask any sleep apnea or TMD/TMJ question and get answers in Dr. Spencer&apos;s own voice, backed by his exact words from SSC modules.
+        </p>
+        <div style={{ display: "flex", gap: 14, justifyContent: "center", flexWrap: "wrap" }}>
+          <a href="/sign-up" className="lp-hero-btn" style={{ padding: "15px 36px", background: "#1976D2", color: "#fff", borderRadius: 999, fontSize: 16, fontWeight: 700, textDecoration: "none", transition: "background 0.2s, transform 0.15s", display: "inline-block" }}>
+            Start for Free
+          </a>
+          <a href="/sign-in" style={{ padding: "15px 36px", background: "transparent", color: "#EAEAEA", border: "1px solid #3a3a3a", borderRadius: 999, fontSize: 16, fontWeight: 600, textDecoration: "none", transition: "border-color 0.2s", display: "inline-block" }}>
+            Sign In
+          </a>
+        </div>
+      </section>
+
+      {/* Feature cards */}
+      <section style={{ maxWidth: 1100, margin: "0 auto", padding: "20px 24px 80px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
+          {[
+            {
+              icon: "💬",
+              title: "His exact words",
+              body: "Every answer is built from Dr. Spencer\u2019s own SSC module transcripts. You\u2019re not getting a paraphrase \u2014 you\u2019re getting the real thing.",
+            },
+            {
+              icon: "🦷",
+              title: "Sleep & TMD covered",
+              body: "From mandibular advancement devices to disc displacements, Ask Dr. Spencer covers the full SSC curriculum across all levels.",
+            },
+            {
+              icon: "📚",
+              title: "Cites the source",
+              body: "Every response tells you exactly which SSC module the answer came from, so you can go deeper in the library any time.",
+            },
+          ].map((card) => (
+            <div key={card.title} className="lp-card" style={{ background: "#161616", border: "1px solid #2a2a2a", borderRadius: 16, padding: "28px 24px", transition: "border-color 0.2s, transform 0.2s" }}>
+              <div style={{ fontSize: 32, marginBottom: 14 }}>{card.icon}</div>
+              <h3 style={{ margin: "0 0 10px", fontSize: 18, fontWeight: 700 }}>{card.title}</h3>
+              <p style={{ margin: 0, color: "#BDBDBD", lineHeight: 1.65, fontSize: 15 }}>{card.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Quote / testimonial */}
+      <section style={{ background: "#141a24", borderTop: "1px solid #1e2a3a", borderBottom: "1px solid #1e2a3a", padding: "60px 24px" }}>
+        <div style={{ maxWidth: 760, margin: "0 auto", textAlign: "center" }}>
+          <p style={{ fontSize: "clamp(18px, 3vw, 26px)", fontStyle: "italic", color: "#D0D0D0", lineHeight: 1.65, margin: "0 0 20px" }}>
+            &ldquo;You could actually do this over dentures if you wanted to. The interlocking appliance is great for that.&rdquo;
+          </p>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+            <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover", border: "2px solid #1976D2" }} />
+            <span style={{ color: "#90CAF9", fontWeight: 600, fontSize: 14 }}>Dr. Jamison Spencer &mdash; SSC Module 115</span>
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing CTA */}
+      <section style={{ maxWidth: 600, margin: "0 auto", padding: "80px 24px", textAlign: "center" }}>
+        <h2 style={{ margin: "0 0 12px", fontSize: "clamp(26px, 4vw, 40px)", fontWeight: 800 }}>Simple pricing</h2>
+        <p style={{ color: "#BDBDBD", fontSize: 16, lineHeight: 1.6, marginBottom: 36 }}>
+          3 free questions to get started. Then $15.99/month for unlimited access.
+        </p>
+        <div style={{ background: "#161616", border: "1px solid #2a2a2a", borderRadius: 20, padding: "36px 32px", marginBottom: 28 }}>
+          <div style={{ fontSize: 13, color: "#90CAF9", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Unlimited</div>
+          <div style={{ fontSize: 52, fontWeight: 900, lineHeight: 1, marginBottom: 6 }}>$15.99</div>
+          <div style={{ color: "#888", fontSize: 14, marginBottom: 28 }}>per month &mdash; cancel any time</div>
+          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px", textAlign: "left", display: "inline-block" }}>
+            {["Unlimited questions", "Full SSC library coverage", "Dr. Spencer\u2019s exact voice", "Source citations on every answer"].map((f) => (
+              <li key={f} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, fontSize: 15, color: "#D0D0D0" }}>
+                <span style={{ color: "#4CAF50", fontSize: 18, lineHeight: 1 }}>&#10003;</span> {f}
+              </li>
+            ))}
+          </ul>
+          <a href="/sign-up" style={{ display: "block", padding: "14px 20px", background: "#1976D2", color: "#fff", borderRadius: 999, fontSize: 16, fontWeight: 700, textDecoration: "none" }}>
+            Get Started Free
+          </a>
+        </div>
+        <p style={{ color: "#555", fontSize: 13 }}>Already a member? <a href="/sign-in" style={{ color: "#90CAF9", textDecoration: "none" }}>Sign in</a></p>
+      </section>
+
+      {/* Footer */}
+      <footer style={{ borderTop: "1px solid #1e1e1e", padding: "24px", textAlign: "center", color: "#555", fontSize: 13 }}>
+        <p style={{ margin: 0 }}>
+          &copy; {new Date().getFullYear()} Ask Dr. Spencer &mdash; Powered by{" "}
+          <a href="https://www.spencerstudyclub.com" target="_blank" rel="noopener" style={{ color: "#90CAF9", textDecoration: "none" }}>Spencer Study Club</a>
+        </p>
+      </footer>
+    </div>
+  );
+}
 
 // ─── main component ──────────────────────────────────────────────────────────
 
@@ -94,11 +252,12 @@ export default function Home() {
   const { user } = useUser();
 
   // Chat state
-  const [sessions, setSessions] = useState([]);       // [{id, title, messages, createdAt}]
-  const [activeId, setActiveId] = useState(null);     // current session id
+  const [sessions, setSessions] = useState([]);
+  const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState(""); // text being streamed in
   const [error, setError] = useState("");
   const [topic, setTopic] = useState("both");
   const [listening, setListening] = useState(false);
@@ -114,6 +273,10 @@ export default function Home() {
   const inputRef = useRef(null);
   const endRef = useRef(null);
   const recognitionRef = useRef(null);
+  const activeIdRef = useRef(activeId);
+
+  // Keep ref in sync with state for use inside async callbacks
+  useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
 
   // ── Detect mobile ──
   useEffect(() => {
@@ -164,10 +327,10 @@ export default function Home() {
     const stored = loadSessions();
     if (stored.length > 0) {
       setSessions(stored);
-      // Always start a new chat on login — don't restore last session
-      startNewChat(stored);
+      // Always start a fresh blank chat on login
+      startNewChatInternal(stored);
     } else {
-      startNewChat([]);
+      startNewChatInternal([]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -180,7 +343,7 @@ export default function Home() {
   // ── Scroll to bottom ──
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length, loading]);
+  }, [messages.length, loading, streamingText]);
 
   // ── Speech recognition ──
   useEffect(() => {
@@ -211,18 +374,33 @@ export default function Home() {
     else { setError(""); rec.start(); setListening(true); }
   }
 
-  // ── Session management ──
-  function startNewChat(existingSessions) {
+  // ── Session management (internal — always takes explicit list) ──
+  function startNewChatInternal(existingList) {
     const id = newSessionId();
     const newSession = { id, title: "New Chat", messages: [], createdAt: Date.now() };
-    const updated = [newSession, ...(existingSessions || sessions)];
+    const updated = [newSession, ...existingList];
     setSessions(updated);
     setActiveId(id);
+    activeIdRef.current = id;
     setMessages([]);
     setQ("");
     setError("");
+    setStreamingText("");
     saveSessions(updated);
     return id;
+  }
+
+  // ── New Chat button handler — skip if current chat is already empty ──
+  function handleNewChat() {
+    // If the current active session has no messages, just focus the input
+    const currentSess = sessions.find((s) => s.id === activeId);
+    if (currentSess && currentSess.messages.length === 0) {
+      inputRef.current?.focus();
+      if (isMobile) setSidebarOpen(false);
+      return;
+    }
+    startNewChatInternal(sessions);
+    if (isMobile) setSidebarOpen(false);
   }
 
   function switchToSession(id) {
@@ -232,6 +410,7 @@ export default function Home() {
     setMessages(sess.messages);
     setQ("");
     setError("");
+    setStreamingText("");
     if (isMobile) setSidebarOpen(false);
   }
 
@@ -244,7 +423,7 @@ export default function Home() {
       if (updated.length > 0) {
         switchToSession(updated[0].id);
       } else {
-        startNewChat([]);
+        startNewChatInternal([]);
       }
     }
   }
@@ -261,7 +440,7 @@ export default function Home() {
     });
   }
 
-  // ── Send message ──
+  // ── Send message with streaming typewriter effect ──
   async function sendMessage(text) {
     const content = (text ?? q).trim();
     if (!content || loading) return;
@@ -279,12 +458,11 @@ export default function Home() {
 
     setError("");
     const userMsg = { id: crypto.randomUUID(), role: "user", content, augmented };
-    const pendingMsg = { id: "pending", role: "pending", content: "" };
-
-    const newMessages = [...messages, userMsg, pendingMsg];
-    setMessages(newMessages);
+    const newMessages = [...messages, userMsg];
+    setMessages([...newMessages, { id: "pending", role: "pending", content: "" }]);
     setQ("");
     setLoading(true);
+    setStreamingText("");
 
     try {
       const history = messages
@@ -299,7 +477,7 @@ export default function Home() {
       });
 
       if (res.status === 402) {
-        setMessages((prev) => prev.filter((m) => m.id !== "pending"));
+        setMessages(newMessages);
         setShowPaywall(true);
         await fetchStatus();
         return;
@@ -313,13 +491,37 @@ export default function Home() {
       const data = await res.json();
       const answer = data.answer || "";
 
-      const finalMessages = [...messages, userMsg, { id: crypto.randomUUID(), role: "assistant", content: answer }];
+      // Remove pending bubble, show streaming bubble
+      setMessages([...newMessages, { id: "streaming", role: "streaming", content: "" }]);
+
+      // Typewriter effect — stream characters in chunks
+      const CHUNK = 4; // characters per tick
+      const DELAY = 12; // ms per tick
+      let i = 0;
+      await new Promise((resolve) => {
+        function tick() {
+          i = Math.min(i + CHUNK, answer.length);
+          setStreamingText(answer.slice(0, i));
+          if (i < answer.length) {
+            setTimeout(tick, DELAY);
+          } else {
+            resolve();
+          }
+        }
+        tick();
+      });
+
+      // Streaming done — replace with final committed message
+      const assistantMsg = { id: crypto.randomUUID(), role: "assistant", content: answer };
+      const finalMessages = [...newMessages, assistantMsg];
       setMessages(finalMessages);
-      updateSessionMessages(activeId, finalMessages);
+      setStreamingText("");
+      updateSessionMessages(activeIdRef.current, finalMessages);
 
       await fetchStatus();
     } catch (err) {
-      setMessages((prev) => prev.filter((m) => m.id !== "pending"));
+      setMessages(newMessages);
+      setStreamingText("");
       setError(err.message);
     } finally {
       setLoading(false);
@@ -368,7 +570,6 @@ export default function Home() {
   // ── Sidebar ──
   const Sidebar = () => (
     <>
-      {/* Overlay for mobile */}
       {isMobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 49 }} />
       )}
@@ -394,7 +595,7 @@ export default function Home() {
         {/* New Chat button */}
         <div style={{ padding: "10px 10px 6px" }}>
           <button
-            onClick={() => startNewChat()}
+            onClick={handleNewChat}
             style={{ width: "100%", padding: "9px 12px", background: "#1976D2", border: "none", borderRadius: 8, color: "#fff", fontWeight: 600, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontFamily: "inherit" }}
           >
             <span style={{ fontSize: 16 }}>＋</span> New Chat
@@ -450,30 +651,15 @@ export default function Home() {
     </>
   );
 
-  // ── Suggested questions ──
-  const SUGGESTED = [
-    "Does a Farrar style night guard hold the jaw forward at night?",
-    "I have a patient who, after TMJ treatment, is only hitting on their back teeth. What do I do?",
-    "Do you have a preferred sleep appliance for patients with dentures?",
-    "What's the difference between a reducing disc displacement and a non-reducing disc displacement?",
-  ];
-
   const mainLeft = sidebarOpen ? 260 : 0;
+  const isEmptyChat = messages.filter((m) => m.role !== "pending" && m.role !== "streaming").length === 0 && !streamingText;
 
   return (
     <main style={{ background: "#212121", minHeight: "100vh", color: "#EAEAEA", display: "flex", flexDirection: "column", overflowX: "hidden" }}>
       {showPaywall && <PaywallModal />}
 
       <SignedOut>
-        <div style={{ flex: 1, display: "grid", placeItems: "center", textAlign: "center", padding: 24 }}>
-          <div>
-            <h1 style={{ margin: 0, fontSize: 48, fontWeight: 800 }}>SSC 2.0 – Doctor Portal</h1>
-            <p style={{ color: "#BDBDBD" }}>
-              Please sign in to continue.&nbsp;&nbsp;
-              <a href="/sign-in" style={{ color: "#90CAF9" }}>Go to Sign In</a>
-            </p>
-          </div>
-        </div>
+        <LandingPage />
       </SignedOut>
 
       <SignedIn>
@@ -499,7 +685,7 @@ export default function Home() {
           transition: "margin-left 0.25s ease",
           display: "flex", flexDirection: "column", minHeight: "100vh",
         }}>
-          {/* Header */}
+          {/* Header — always shown */}
           <section style={{ maxWidth: 860, width: "100%", margin: "0 auto", padding: "80px 16px 12px", textAlign: "center", boxSizing: "border-box" }}>
             <div style={{ display: "grid", justifyItems: "center", alignItems: "center", marginBottom: 8, rowGap: 10 }}>
               <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", border: "1px solid #424242" }} />
@@ -508,23 +694,10 @@ export default function Home() {
                 <h1 style={{ margin: 0, fontSize: 36, fontWeight: 800, letterSpacing: 0.2, lineHeight: 1.1 }}>SSC 2.0 – Doctor Portal</h1>
               </div>
             </div>
-            <p style={{ margin: "8px auto 0", maxWidth: 760, color: "#D0D0D0", lineHeight: 1.6, fontSize: 16, padding: "0 4px" }}>
-              Ask Dr. Spencer is your Spencer Study Club powered assistant. Answering your sleep apnea and TMJ/TMD questions with clear, practical points right from the SSC modules.
-            </p>
-
-            {/* Suggested questions — only when chat is empty */}
-            {messages.filter((m) => m.role !== "pending").length === 0 && (
-              <div style={{ marginTop: 20, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10, padding: "0 8px" }}>
-                {SUGGESTED.map((s, i) => (
-                  <button
-                    key={i}
-                    onClick={() => !loading && sendMessage(s)}
-                    style={{ background: "#2A2A2A", border: "1px solid #3A3A3A", color: "#DADADA", borderRadius: 20, padding: "10px 14px", cursor: loading ? "not-allowed" : "pointer", fontSize: 13, opacity: loading ? 0.7 : 1, maxWidth: "100%", whiteSpace: "normal", textAlign: "center", boxSizing: "border-box", fontFamily: "inherit" }}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
+            {isEmptyChat && (
+              <p style={{ margin: "8px auto 0", maxWidth: 760, color: "#D0D0D0", lineHeight: 1.6, fontSize: 16, padding: "0 4px" }}>
+                Ask Dr. Spencer is your Spencer Study Club powered assistant. Answering your sleep apnea and TMJ/TMD questions with clear, practical points right from the SSC modules.
+              </p>
             )}
           </section>
 
@@ -543,6 +716,8 @@ export default function Home() {
                 <AssistantBubble key={m.id}>
                   <div style={{ color: "#EAEAEA", fontFamily: "inherit" }} dangerouslySetInnerHTML={{ __html: formatAssistantHTML(m.content) }} />
                 </AssistantBubble>
+              ) : m.role === "streaming" ? (
+                <StreamingBubble key="streaming" text={streamingText} />
               ) : (
                 <PendingBubble key={m.id} />
               )
