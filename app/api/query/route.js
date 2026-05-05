@@ -200,6 +200,12 @@ export async function POST(req) {
       })
       .join("\n\n");
 
+    // Build CITATIONS block from retrieved results
+    const friendlyCites = buildCitationsFromResults(results);
+    const citationsBlock = friendlyCites.length
+      ? friendlyCites.map((c) => `- ${c}`).join("\n")
+      : "(none)";
+
     const priorTurns = history.map((m) => ({ role: m.role, content: m.content }));
 
     const messages = [
@@ -210,30 +216,23 @@ export async function POST(req) {
         content:
           `Question:\n${question}\n\n` +
           `Retrieved Context (use ONLY this material; do not rely on memory):\n${contextBlocks}\n\n` +
+          `CITATIONS:\n${citationsBlock}\n\n` +
           `Instructions:\n` +
-          `- Use ONLY the retrieved context when giving facts.\n` +
-          `- Keep the tone and format per the system prompt.\n` +
-          `- If the context is insufficient, follow the exact fallback line from the system prompt.`,
+          `- Answer the question using the retrieved context above. Speak naturally as Dr. Spencer.\n` +
+          `- Only use the fallback line if the retrieved context has absolutely no relevant information about the question.\n` +
+          `- If the context is even partially relevant, use it to give the best answer you can.\n` +
+          `- End your response with the "## Where this lives in SSC" section using only the CITATIONS list above.`,
       },
     ];
 
     // ---- Generate answer ----
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o",
       messages,
-      temperature: 0.2,
+      temperature: 0.3,
     });
 
-    let answer = completion.choices?.[0]?.message?.content || "";
-
-    const friendlyCites = buildCitationsFromResults(results);
-    if (friendlyCites.length) {
-      const list = friendlyCites.map((c) => `- ${c}`).join("\n");
-      answer +=
-        `\n\nWhere this lives in SSC\n` +
-        `This information can be found in:\n${list}\n` +
-        `You can browse the SSC Library here: https://www.spencerstudyclub.com/library`;
-    }
+    const answer = completion.choices?.[0]?.message?.content || "";
 
     // ---- Increment chat count (only for free_trial users) ----
     if (plan === "free_trial") {
