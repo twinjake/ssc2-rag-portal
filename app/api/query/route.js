@@ -1,4 +1,4 @@
-// app/api/query/route.js
+// app/api/query/route.js  — Hybrid Search + Cohere Re-ranking
 import OpenAI from "openai";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { SYSTEM_PROMPT } from "../../../lib/prompt";
@@ -13,10 +13,10 @@ const qdrant = new QdrantClient({
   apiKey: process.env.QDRANT_API_KEY,
 });
 
-const COLLECTION = process.env.QDRANT_COLLECTION || "ssc2";
+const COLLECTION = process.env.QDRANT_COLLECTION || "ssc2-hybrid";
+const COHERE_API_KEY = process.env.COHERE_API_KEY;
 const FREE_LIMIT = 3;
 
-// Toggle PHI check via env: APP_REQUIRE_PHI_FILTER=true
 const REQUIRE_PHI_FILTER =
   (process.env.APP_REQUIRE_PHI_FILTER || "false").toLowerCase() === "true";
 
@@ -125,6 +125,72 @@ function sanitizeHistory(rawHistory) {
   return clipped;
 }
 
+// Build sparse BM25 vector from text (same algorithm as ingestion)
+function buildSparseVector(text) {
+  const words = text.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+
+  const tf = {};
+  for (const word of words) {
+    tf[word] = (tf[word] || 0) + 1;
+  }
+
+  const indices = [];
+  const values = [];
+
+  for (const [word, count] of Object.entries(tf)) {
+    let hash = 0;
+    for (let i = 0; i < word.length; i++) {
+      hash = ((hash << 5) - hash) + word.charCodeAt(i);
+      hash |= 0;
+    }
+    const idx = Math.abs(hash) % 30000;
+    const tfScore = count / words.length;
+
+    if (!indices.includes(idx)) {
+      indices.push(idx);
+      values.push(tfScore);
+    }
+  }
+
+  return { indices, values };
+}
+
+// Cohere re-ranking
+async function rerankWithCohere(query, documents, topN = 8) {
+  if (!COHERE_API_KEY || documents.length === 0) return documents.slice(0, topN);
+
+  try {
+    const response = await fetch("https://api.cohere.com/v2/rerank", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${COHERE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "rerank-english-v3.0",
+        query,
+        documents: documents.map(d => d.payload?.text || ""),
+        top_n: topN,
+        return_documents: false,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error("Cohere rerank error:", response.status, await response.text());
+      return documents.slice(0, topN);
+    }
+
+    const data = await response.json();
+    return data.results.map(r => documents[r.index]);
+  } catch (e) {
+    console.error("Cohere rerank exception:", e.message);
+    return documents.slice(0, topN);
+  }
+}
+
 // ----------------- handler -----------------
 export async function POST(req) {
   try {
@@ -168,77 +234,69 @@ export async function POST(req) {
       );
     }
 
-    // ---- Keyword-based context injection for known edge cases ----
-    // Some questions use terminology that doesn't match the KB text closely enough
-    // for vector search alone. We inject relevant chunks directly for known topics.
-    const KEYWORD_MODULES = [
-      {
-        keywords: ["denture", "edentulous", "no teeth", "missing teeth", "over denture"],
-        modules: ["115", "204", "510"],
-      },
-      {
-        keywords: ["tongue retaining", "trd", "tongue device", "tongue stabilizing"],
-        modules: ["115", "204"],
-      },
-    ];
-
-    const questionLower = question.toLowerCase();
-    const keywordModules = new Set();
-    for (const rule of KEYWORD_MODULES) {
-      if (rule.keywords.some((kw) => questionLower.includes(kw))) {
-        rule.modules.forEach((m) => keywordModules.add(m));
-      }
-    }
-
-    // ---- Embed the question ----
+    // ---- Embed the question (dense vector) ----
     const embed = await openai.embeddings.create({
       model: "text-embedding-3-large",
       input: question,
     });
     const queryVec = embed.data[0].embedding;
 
-    // ---- Vector search in Qdrant ----
-    const results = await qdrant.search(COLLECTION, {
-      vector: queryVec,
-      limit: 12,
-    });
+    // ---- Build sparse vector for BM25 keyword search ----
+    const sparseVec = buildSparseVector(question);
 
-    // ---- Inject keyword-matched chunks if needed ----
-    let keywordResults = [];
-    if (keywordModules.size > 0) {
-      try {
-        const scrolled = await qdrant.scroll(COLLECTION, {
-          filter: {
-            should: Array.from(keywordModules).map((mod) => ({
-              key: "module",
-              match: { value: mod },
-            })),
-          },
-          limit: 20,
-          with_payload: true,
-          with_vector: false,
-        });
-        // Convert scroll results to search-result format (no score)
-        keywordResults = (scrolled.points || []).map((p) => ({
-          id: p.id,
-          score: 0,
-          payload: p.payload,
-        }));
-      } catch (e) {
-        // Non-fatal: proceed without keyword injection
-        console.error("Keyword scroll error:", e.message);
-      }
-    }
+    // ---- Hybrid search: dense + sparse in parallel ----
+    const [denseResults, sparseResults] = await Promise.all([
+      // Dense semantic search
+      qdrant.search(COLLECTION, {
+        vector: { name: "dense", vector: queryVec },
+        limit: 20,
+        with_payload: true,
+      }).catch(e => {
+        console.error("Dense search error:", e.message);
+        return [];
+      }),
+      // Sparse BM25 keyword search
+      qdrant.search(COLLECTION, {
+        vector: {
+          name: "sparse",
+          vector: { indices: sparseVec.indices, values: sparseVec.values },
+        },
+        limit: 20,
+        with_payload: true,
+      }).catch(e => {
+        console.error("Sparse search error:", e.message);
+        return [];
+      }),
+    ]);
 
-    // Merge keyword results with vector results (keyword first, deduplicated)
-    const seenIds = new Set(results.map((r) => r.id));
-    const mergedResults = [
-      ...keywordResults.filter((r) => !seenIds.has(r.id)),
-      ...results,
-    ];
+    // ---- Reciprocal Rank Fusion (RRF) to merge results ----
+    const k = 60; // RRF constant
+    const scoreMap = new Map();
+    const payloadMap = new Map();
+
+    const addRRF = (results, weight = 1) => {
+      results.forEach((r, rank) => {
+        const id = String(r.id);
+        const prev = scoreMap.get(id) || 0;
+        scoreMap.set(id, prev + weight * (1 / (k + rank + 1)));
+        if (!payloadMap.has(id)) payloadMap.set(id, r);
+      });
+    };
+
+    addRRF(denseResults, 1.0);
+    addRRF(sparseResults, 1.0);
+
+    // Sort by RRF score and take top 25 candidates for re-ranking
+    const candidates = Array.from(scoreMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 25)
+      .map(([id]) => payloadMap.get(id));
+
+    // ---- Cohere re-ranking ----
+    const reranked = await rerankWithCohere(question, candidates, 8);
 
     // ---- Build context blocks ----
-    const contextBlocks = mergedResults
+    const contextBlocks = reranked
       .map((r, i) => {
         const p = r.payload || {};
         const citation = extractCitationFromPayload(p);
@@ -256,8 +314,8 @@ export async function POST(req) {
       })
       .join("\n\n");
 
-    // Build CITATIONS block from retrieved results
-    const friendlyCites = buildCitationsFromResults(mergedResults);
+    // Build CITATIONS block from re-ranked results
+    const friendlyCites = buildCitationsFromResults(reranked);
     const citationsBlock = friendlyCites.length
       ? friendlyCites.map((c) => `- ${c}`).join("\n")
       : "(none)";
@@ -271,11 +329,12 @@ export async function POST(req) {
         role: "user",
         content:
           `Question:\n${question}\n\n` +
-          `Retrieved Context (use ONLY this material; do not rely on memory):\n${contextBlocks}\n\n` +
+          `Retrieved Context (use ONLY this material; do not rely on general knowledge):\n${contextBlocks}\n\n` +
           `CITATIONS:\n${citationsBlock}\n\n` +
           `Instructions:\n` +
-          `- Answer the question using the retrieved context above. Speak naturally as Dr. Spencer.\n` +
-          `- Only use the fallback line if the retrieved context has absolutely no relevant information about the question.\n` +
+          `- Answer the question using ONLY the retrieved context above. Speak naturally as Dr. Spencer.\n` +
+          `- Do NOT add information from general medical knowledge that is not in the context.\n` +
+          `- Only use the fallback line if the retrieved context has absolutely no relevant information.\n` +
           `- If the context is even partially relevant, use it to give the best answer you can.\n` +
           `- End your response with the "## Where this lives in SSC" section using only the CITATIONS list above.`,
       },
@@ -290,29 +349,16 @@ export async function POST(req) {
 
     const answer = completion.choices?.[0]?.message?.content || "";
 
-    // ---- Increment chat count (only for free_trial users) ----
-    if (plan === "free_trial") {
-      const newCount = chatCount + 1;
-      const lastChat = new Date().toISOString();
-      await clerk.users.updateUserMetadata(userId, {
-        publicMetadata: {
-          ...meta,
-          chatCount: newCount,
-          lastChat,
-        },
-      });
-    } else {
-      // For paid/comped, still track usage for admin visibility
-      const newCount = chatCount + 1;
-      const lastChat = new Date().toISOString();
-      await clerk.users.updateUserMetadata(userId, {
-        publicMetadata: {
-          ...meta,
-          chatCount: newCount,
-          lastChat,
-        },
-      });
-    }
+    // ---- Increment chat count ----
+    const newCount = chatCount + 1;
+    const lastChat = new Date().toISOString();
+    await clerk.users.updateUserMetadata(userId, {
+      publicMetadata: {
+        ...meta,
+        chatCount: newCount,
+        lastChat,
+      },
+    });
 
     return new Response(JSON.stringify({ answer }), {
       status: 200,
