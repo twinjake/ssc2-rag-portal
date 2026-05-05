@@ -1,17 +1,15 @@
 "use client";
 
 import { SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
-import PricingTable from "../../components/PricingTable";
 
 export default function PricingPage() {
   return (
     <main
       style={{
         minHeight: "100vh",
-        display: "grid",
-        gridTemplateRows: "auto 1fr",
         background: "#212121",
         color: "#e6e6e6",
+        fontFamily: "system-ui, sans-serif",
       }}
     >
       {/* Top bar */}
@@ -24,10 +22,11 @@ export default function PricingPage() {
           maxWidth: 1100,
           margin: "0 auto",
           width: "100%",
+          boxSizing: "border-box",
         }}
       >
         <a href="/" style={{ textDecoration: "none", color: "#e6e6e6" }}>
-          <strong>SSC 2.0 – Doctor Portal</strong>
+          <strong>Ask Dr. Spencer</strong>
         </a>
         <div>
           <SignedIn>
@@ -41,6 +40,8 @@ export default function PricingPage() {
                 borderRadius: 999,
                 border: "1px solid #3a2a2a",
                 background: "#2a2a2a",
+                textDecoration: "none",
+                color: "#e6e6e6",
               }}
             >
               Sign in
@@ -49,18 +50,101 @@ export default function PricingPage() {
         </div>
       </div>
 
-      {/* Content */}
+      {/* Pricing content */}
       <div
         style={{
-          display: "grid",
-          justifyItems: "center",
-          alignItems: "start",
-          padding: "20px",
+          maxWidth: 520,
+          margin: "60px auto",
+          padding: "0 20px",
+          textAlign: "center",
         }}
       >
-        <div style={{ width: "100%", maxWidth: 1100 }}>
-          <PricingTable />
+        <h1 style={{ fontSize: 32, fontWeight: 700, marginBottom: 12 }}>
+          Unlock Unlimited Access
+        </h1>
+        <p style={{ color: "#bdbdbd", lineHeight: 1.6, marginBottom: 40 }}>
+          You&apos;ve used your 3 free chats. Subscribe to continue getting
+          AI-powered answers from Spencer Study Club content — in Dr.
+          Spencer&apos;s own voice.
+        </p>
+
+        {/* Plan card */}
+        <div
+          style={{
+            background: "#181818",
+            border: "1px solid #2a2a2a",
+            borderRadius: 20,
+            padding: "36px 32px",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+          }}
+        >
+          <div
+            style={{
+              display: "inline-block",
+              padding: "4px 14px",
+              borderRadius: 999,
+              background: "#0ea5e922",
+              color: "#0ea5e9",
+              border: "1px solid #0ea5e944",
+              fontSize: 12,
+              fontWeight: 700,
+              marginBottom: 20,
+            }}
+          >
+            UNLIMITED PLAN
+          </div>
+
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 6, marginBottom: 8 }}>
+            <span style={{ fontSize: 52, fontWeight: 800 }}>$15.99</span>
+            <span style={{ color: "#bdbdbd", fontSize: 18 }}>/month</span>
+          </div>
+          <p style={{ color: "#888", fontSize: 14, marginBottom: 28 }}>Cancel anytime</p>
+
+          <ul
+            style={{
+              listStyle: "none",
+              padding: 0,
+              margin: "0 0 32px",
+              display: "grid",
+              gap: 12,
+              textAlign: "left",
+            }}
+          >
+            {[
+              "Unlimited AI-powered Q&A",
+              "Answers grounded in SSC content",
+              "Dr. Spencer's voice and teaching style",
+              "TMD/TMJ and Sleep Apnea coverage",
+              "Module citations included",
+            ].map((f) => (
+              <li key={f} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                <span style={{ color: "#22c55e", fontSize: 16, marginTop: 1 }}>✓</span>
+                <span style={{ color: "#d6d6d6", fontSize: 15 }}>{f}</span>
+              </li>
+            ))}
+          </ul>
+
+          <a
+            href="/api/stripe/checkout"
+            style={{
+              display: "block",
+              padding: "14px 20px",
+              borderRadius: 999,
+              background: "#0ea5e9",
+              color: "#001018",
+              fontWeight: 700,
+              fontSize: 16,
+              textDecoration: "none",
+              textAlign: "center",
+            }}
+          >
+            Subscribe Now — $15.99/mo
+          </a>
         </div>
+
+        <p style={{ color: "#555", fontSize: 12, marginTop: 20 }}>
+          Education-only. Not medical advice.
+        </p>
       </div>
     </main>
   );
