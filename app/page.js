@@ -71,34 +71,22 @@ const AssistantBubble = ({ children }) => (
   </div>
 );
 
-// Animated thinking bubble with pulsing dots
+// iMessage-style three-dot typing indicator
 const PendingBubble = () => (
-  <div style={{ display: "flex", gap: 10, margin: "10px 0", alignItems: "flex-start" }}>
-    <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid #424242", objectFit: "cover", flexShrink: 0, marginTop: 2 }} />
-    <div style={{ background: "#181818", border: "1px solid #2A2A2A", padding: "14px 18px", borderRadius: 14, borderTopLeftRadius: 4, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 12 }}>
-      {/* Spinning arc */}
-      <svg width="20" height="20" viewBox="0 0 40 40" style={{ flexShrink: 0 }}>
-        <circle cx="20" cy="20" r="15" stroke="#2a2a2a" strokeWidth="3.5" fill="none" />
-        <circle cx="20" cy="20" r="15" stroke="#90CAF9" strokeWidth="3.5" fill="none"
-          strokeLinecap="round" strokeDasharray="60 36"
-          style={{ transformOrigin: "center", animation: "ssc-spin 0.85s linear infinite" }} />
-      </svg>
-      {/* Pulsing dots */}
-      <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-        {[0, 1, 2].map((i) => (
-          <span key={i} style={{
-            width: 7, height: 7, borderRadius: "50%", background: "#90CAF9", display: "block",
-            animation: `ssc-pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
-          }} />
-        ))}
-      </div>
-      <span style={{ color: "#9E9E9E", fontSize: 14 }}>Thinking…</span>
+  <div style={{ display: "flex", gap: 10, margin: "10px 0", alignItems: "flex-end" }}>
+    <img src="/dr-spencer.jpg" alt="Dr. Spencer" style={{ width: 28, height: 28, borderRadius: "50%", border: "1px solid #424242", objectFit: "cover", flexShrink: 0 }} />
+    <div style={{ background: "#181818", border: "1px solid #2A2A2A", padding: "12px 16px", borderRadius: 18, borderBottomLeftRadius: 4, display: "flex", alignItems: "center", gap: 5 }}>
+      {[0, 1, 2].map((i) => (
+        <span key={i} style={{
+          width: 8, height: 8, borderRadius: "50%", background: "#888", display: "block",
+          animation: `ssc-dot 1.4s ease-in-out ${i * 0.2}s infinite`,
+        }} />
+      ))}
     </div>
     <style>{`
-      @keyframes ssc-spin { to { transform: rotate(360deg); } }
-      @keyframes ssc-pulse {
-        0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-        40% { transform: scale(1); opacity: 1; }
+      @keyframes ssc-dot {
+        0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+        30% { transform: translateY(-5px); opacity: 1; }
       }
     `}</style>
   </div>
