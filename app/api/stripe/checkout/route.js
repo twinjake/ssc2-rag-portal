@@ -1,3 +1,4 @@
+// app/api/stripe/checkout/route.js
 import Stripe from "stripe";
 import { auth, currentUser } from "@clerk/nextjs/server";
 
@@ -10,45 +11,51 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
 const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "http://localhost:3000";
 
-const PRICE_MAP = {
-  starter: process.env.STRIPE_PRICE_STARTER,
-  pro: process.env.STRIPE_PRICE_PRO,
-  team: process.env.STRIPE_PRICE_TEAM,
-};
-
 export async function GET(req) {
   try {
-    const { searchParams } = new URL(req.url);
-    const tier = (searchParams.get("tier") || "").toLowerCase();
-    const priceId = PRICE_MAP[tier];
-    if (!priceId) {
-      return new Response("Unknown or missing ?tier=starter|pro|team", { status: 400 });
+    const { userId } = await auth();
+    if (!userId) {
+      return Response.redirect(`${SITE_URL}/sign-in`);
     }
 
     let customerEmail, clientReferenceId;
     try {
-      const { userId } = auth();
-      if (userId) {
-        clientReferenceId = userId;
-        const u = await currentUser();
-        customerEmail = u?.emailAddresses?.[0]?.emailAddress;
+      const user = await currentUser();
+      if (user) {
+        clientReferenceId = user.id;
+        customerEmail = user.emailAddresses?.[0]?.emailAddress;
       }
     } catch {}
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      line_items: [{ price: priceId, quantity: 1 }],
-      allow_promotion_codes: true,
-      customer_email: customerEmail,
-      client_reference_id: clientReferenceId,
-      success_url: `${SITE_URL}/pricing?success=1`,
-      cancel_url: `${SITE_URL}/pricing?canceled=1`,
-      metadata: { tier, source: "askdrspencer.com" },
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: "Ask Dr. Spencer – Unlimited Access",
+              description: "Unlimited AI-powered Q&A from Spencer Study Club content.",
+            },
+            unit_amount: 1599, // $15.99
+            recurring: { interval: "month" },
+          },
+          quantity: 1,
+        },
+      ],
+      client_reference_id: clientReferenceId || undefined,
+      customer_email: customerEmail || undefined,
+      success_url: `${SITE_URL}/?subscribed=1`,
+      cancel_url: `${SITE_URL}/pricing`,
+      metadata: {
+        clerk_user_id: clientReferenceId || "",
+      },
     });
 
-    return new Response(null, { status: 303, headers: { Location: session.url } });
+    return Response.redirect(session.url, 303);
   } catch (err) {
-    console.error("Stripe checkout error:", err);
-    return new Response("Checkout error", { status: 500 });
+    console.error(err);
+    return new Response(JSON.stringify({ error: err.message }), { status: 500 });
   }
 }
