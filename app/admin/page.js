@@ -1,273 +1,216 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { UserButton } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
 
-const PLAN_LABELS = {
-  free_trial: "Free Trial",
-  paid: "Paid",
-  comped: "Comped (Free Unlimited)",
-  admin: "Admin",
-};
-
-const PLAN_COLORS = {
-  free_trial: "#888",
-  paid: "#22c55e",
-  comped: "#0ea5e9",
-  admin: "#f59e0b",
-};
-
-export default function AdminPage() {
+export default function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [search, setSearch] = useState("");
-  const [editingId, setEditingId] = useState(null);
-  const [editPlan, setEditPlan] = useState("");
-  const [editReset, setEditReset] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState("");
+  const [stats, setStats] = useState({ total: 0, paid: 0, trial: 0, comped: 0 });
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authed, setAuthed] = useState(false);
+  const router = useRouter();
 
-  // Invite form
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteFirst, setInviteFirst] = useState("");
-  const [inviteLast, setInviteLast] = useState("");
-  const [invitePlan, setInvitePlan] = useState("free_trial");
-  const [inviting, setInviting] = useState(false);
-  const [inviteMsg, setInviteMsg] = useState("");
+  // Check admin auth on mount
+  useEffect(() => {
+    fetch("/api/admin/auth")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) {
+          setAuthed(true);
+        } else {
+          router.replace("/admin/login");
+        }
+        setAuthChecked(true);
+      })
+      .catch(() => {
+        router.replace("/admin/login");
+        setAuthChecked(true);
+      });
+  }, [router]);
+
+  // Load users once authed
+  useEffect(() => {
+    if (!authed) return;
+    loadUsers();
+  }, [authed]);
 
   async function loadUsers() {
     setLoading(true);
-    setError("");
     try {
-      const res = await fetch("/api/admin/users?limit=200");
-      if (res.status === 403) {
-        setError("Access denied. Admin only.");
-        setLoading(false);
-        return;
-      }
+      const res = await fetch("/api/admin/users");
+      if (res.status === 401) { router.replace("/admin/login"); return; }
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setUsers(data.users || []);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+      const userList = data.users || [];
+      setUsers(userList);
+
+      const total = userList.length;
+      const paid = userList.filter((u) => u.plan === "paid").length;
+      const comped = userList.filter((u) => u.plan === "comped").length;
+      const trial = userList.filter((u) => u.plan === "free_trial" || !u.plan).length;
+      setStats({ total, paid, trial, comped });
+    } catch {}
+    setLoading(false);
   }
 
-  useEffect(() => { loadUsers(); }, []);
-
-  const filtered = users.filter((u) => {
-    const q = search.toLowerCase();
-    return (
-      u.email.toLowerCase().includes(q) ||
-      `${u.firstName} ${u.lastName}`.toLowerCase().includes(q)
-    );
-  });
-
-  async function savePlan(userId) {
-    setSaving(true);
-    setSaveMsg("");
-    try {
-      const res = await fetch("/api/admin/users", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, plan: editPlan, resetCount: editReset }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setSaveMsg("Saved!");
-      setEditingId(null);
-      await loadUsers();
-    } catch (e) {
-      setSaveMsg("Error: " + e.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function sendInvite(e) {
-    e.preventDefault();
-    setInviting(true);
-    setInviteMsg("");
+  async function updatePlan(userId, newPlan) {
     try {
       const res = await fetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: inviteEmail,
-          firstName: inviteFirst,
-          lastName: inviteLast,
-          plan: invitePlan,
-        }),
+        body: JSON.stringify({ userId, plan: newPlan }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setInviteMsg(`Invitation sent to ${inviteEmail}`);
-      setInviteEmail(""); setInviteFirst(""); setInviteLast(""); setInvitePlan("free_trial");
-      await loadUsers();
-    } catch (e) {
-      setInviteMsg("Error: " + e.message);
-    } finally {
-      setInviting(false);
-    }
+      if (res.ok) await loadUsers();
+    } catch {}
   }
 
-  const s = {
-    page: { minHeight: "100vh", background: "#111", color: "#eaeaea", fontFamily: "system-ui, sans-serif", padding: "0 0 60px" },
-    topbar: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 28px", borderBottom: "1px solid #222", background: "#181818" },
-    title: { margin: 0, fontSize: 20, fontWeight: 700 },
-    section: { maxWidth: 1100, margin: "32px auto", padding: "0 20px" },
-    card: { background: "#181818", border: "1px solid #2a2a2a", borderRadius: 12, padding: "24px", marginBottom: 28 },
-    h2: { margin: "0 0 18px", fontSize: 16, fontWeight: 600, color: "#ccc" },
-    input: { background: "#222", border: "1px solid #333", borderRadius: 8, color: "#eaeaea", padding: "8px 12px", fontSize: 14, outline: "none", width: "100%" },
-    btn: { padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13 },
-    table: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
-    th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #2a2a2a", color: "#888", fontWeight: 600 },
-    td: { padding: "10px 12px", borderBottom: "1px solid #1e1e1e", verticalAlign: "middle" },
-    badge: (plan) => ({
-      display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: 11,
-      fontWeight: 700, background: PLAN_COLORS[plan] + "22", color: PLAN_COLORS[plan],
-      border: `1px solid ${PLAN_COLORS[plan]}44`,
-    }),
-    select: { background: "#222", border: "1px solid #333", borderRadius: 6, color: "#eaeaea", padding: "6px 10px", fontSize: 13 },
+  async function handleLogout() {
+    await fetch("/api/admin/auth", { method: "DELETE" });
+    router.push("/admin/login");
+  }
+
+  const filtered = users.filter((u) => {
+    const q = search.toLowerCase();
+    return (
+      !q ||
+      (u.email || "").toLowerCase().includes(q) ||
+      (u.name || "").toLowerCase().includes(q)
+    );
+  });
+
+  const planBadge = (plan) => {
+    const map = {
+      paid: { label: "Paid", bg: "#1a3a1a", color: "#4caf50", border: "#2e5e2e" },
+      comped: { label: "Comped ✓", bg: "#1a2a3a", color: "#64b5f6", border: "#1e4060" },
+      free_trial: { label: "Free Trial", bg: "#2a2a1a", color: "#ffc107", border: "#4a3a00" },
+    };
+    const s = map[plan] || map.free_trial;
+    return (
+      <span style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}`, borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 600 }}>
+        {s.label}
+      </span>
+    );
   };
 
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#121212", display: "grid", placeItems: "center", color: "#888", fontFamily: "system-ui, sans-serif" }}>
+        Checking access…
+      </div>
+    );
+  }
+
+  if (!authed) return null;
+
   return (
-    <div style={s.page}>
-      <div style={s.topbar}>
-        <h1 style={s.title}>Admin Dashboard — Ask Dr. Spencer</h1>
-        <UserButton />
+    <main style={{ minHeight: "100vh", background: "#121212", color: "#eaeaea", fontFamily: "system-ui, -apple-system, sans-serif", padding: "0 0 60px" }}>
+      {/* Top bar */}
+      <div style={{ background: "#1a1a1a", borderBottom: "1px solid #2a2a2a", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 22 }}>⚙️</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Ask Dr. Spencer — Admin</div>
+            <div style={{ fontSize: 12, color: "#888" }}>User Management Dashboard</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={loadUsers} style={{ padding: "7px 14px", background: "#2a2a2a", border: "1px solid #3a3a3a", borderRadius: 8, color: "#ccc", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
+            ↻ Refresh
+          </button>
+          <a href="/" style={{ padding: "7px 14px", background: "#2a2a2a", border: "1px solid #3a3a3a", borderRadius: 8, color: "#ccc", cursor: "pointer", fontSize: 13, textDecoration: "none" }}>
+            ← App
+          </a>
+          <button onClick={handleLogout} style={{ padding: "7px 14px", background: "#2b1f1f", border: "1px solid #4a2a2a", borderRadius: 8, color: "#FF8A80", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
+            Sign Out
+          </button>
+        </div>
       </div>
 
-      <div style={s.section}>
-        {/* Stats row */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, marginBottom: 28 }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px" }}>
+        {/* Stats */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 28 }}>
           {[
-            { label: "Total Users", value: users.length },
-            { label: "Paid", value: users.filter(u => u.plan === "paid").length },
-            { label: "Comped", value: users.filter(u => u.plan === "comped").length },
-            { label: "Free Trial", value: users.filter(u => u.plan === "free_trial").length },
-            { label: "Total Chats", value: users.reduce((a, u) => a + (u.chatCount || 0), 0) },
-          ].map((stat) => (
-            <div key={stat.label} style={{ ...s.card, padding: "16px 20px", marginBottom: 0, textAlign: "center" }}>
-              <div style={{ fontSize: 28, fontWeight: 700 }}>{stat.value}</div>
-              <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>{stat.label}</div>
+            { label: "Total Users", value: stats.total, color: "#90CAF9" },
+            { label: "Paid", value: stats.paid, color: "#4caf50" },
+            { label: "Free Trial", value: stats.trial, color: "#ffc107" },
+            { label: "Comped", value: stats.comped, color: "#64b5f6" },
+          ].map((s) => (
+            <div key={s.label} style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 12, padding: "16px 20px" }}>
+              <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 13, color: "#888", marginTop: 2 }}>{s.label}</div>
             </div>
           ))}
         </div>
 
-        {/* Invite new user */}
-        <div style={s.card}>
-          <h2 style={s.h2}>Invite / Add User</h2>
-          <form onSubmit={sendInvite} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto", gap: 10, alignItems: "end" }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>Email *</label>
-              <input style={s.input} type="email" required value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="user@example.com" />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>First Name</label>
-              <input style={s.input} value={inviteFirst} onChange={e => setInviteFirst(e.target.value)} placeholder="Jane" />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>Last Name</label>
-              <input style={s.input} value={inviteLast} onChange={e => setInviteLast(e.target.value)} placeholder="Smith" />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 4 }}>Plan</label>
-              <select style={{ ...s.select, width: "100%" }} value={invitePlan} onChange={e => setInvitePlan(e.target.value)}>
-                <option value="free_trial">Free Trial (3 chats)</option>
-                <option value="paid">Paid</option>
-                <option value="comped">Comped (Free Unlimited)</option>
-              </select>
-            </div>
-            <button type="submit" disabled={inviting} style={{ ...s.btn, background: "#0ea5e9", color: "#fff", height: 38 }}>
-              {inviting ? "Sending..." : "Send Invite"}
-            </button>
-          </form>
-          {inviteMsg && <p style={{ marginTop: 10, fontSize: 13, color: inviteMsg.startsWith("Error") ? "#f87171" : "#22c55e" }}>{inviteMsg}</p>}
+        {/* Search */}
+        <div style={{ marginBottom: 16 }}>
+          <input
+            type="text"
+            placeholder="Search by name or email…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: "100%", maxWidth: 400, padding: "9px 14px", background: "#1a1a1a", border: "1px solid #333", borderRadius: 8, color: "#eaeaea", fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+          />
         </div>
 
-        {/* User list */}
-        <div style={s.card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h2 style={{ ...s.h2, margin: 0 }}>All Users ({filtered.length})</h2>
-            <input
-              style={{ ...s.input, width: 240 }}
-              placeholder="Search by name or email..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
-
-          {error && <p style={{ color: "#f87171" }}>{error}</p>}
-          {loading ? (
-            <p style={{ color: "#888" }}>Loading users...</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    <th style={s.th}>Name</th>
-                    <th style={s.th}>Email</th>
-                    <th style={s.th}>Plan</th>
-                    <th style={s.th}>Chats Used</th>
-                    <th style={s.th}>Last Chat</th>
-                    <th style={s.th}>Joined</th>
-                    <th style={s.th}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((u) => (
-                    <tr key={u.id}>
-                      <td style={s.td}>{u.firstName} {u.lastName}</td>
-                      <td style={s.td}>{u.email}</td>
-                      <td style={s.td}>
-                        {editingId === u.id ? (
-                          <select style={s.select} value={editPlan} onChange={e => setEditPlan(e.target.value)}>
-                            <option value="free_trial">Free Trial</option>
-                            <option value="paid">Paid</option>
-                            <option value="comped">Comped</option>
-                            <option value="admin">Admin</option>
-                          </select>
-                        ) : (
-                          <span style={s.badge(u.plan || "free_trial")}>{PLAN_LABELS[u.plan] || u.plan}</span>
-                        )}
-                      </td>
-                      <td style={s.td}>{u.chatCount || 0}</td>
-                      <td style={s.td}>{u.lastChat ? new Date(u.lastChat).toLocaleDateString() : "—"}</td>
-                      <td style={s.td}>{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</td>
-                      <td style={s.td}>
-                        {editingId === u.id ? (
-                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                            <label style={{ fontSize: 11, color: "#888", display: "flex", alignItems: "center", gap: 4 }}>
-                              <input type="checkbox" checked={editReset} onChange={e => setEditReset(e.target.checked)} />
-                              Reset count
-                            </label>
-                            <button onClick={() => savePlan(u.id)} disabled={saving} style={{ ...s.btn, background: "#22c55e", color: "#000" }}>
-                              {saving ? "..." : "Save"}
-                            </button>
-                            <button onClick={() => setEditingId(null)} style={{ ...s.btn, background: "#333", color: "#eaeaea" }}>Cancel</button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => { setEditingId(u.id); setEditPlan(u.plan || "free_trial"); setEditReset(false); setSaveMsg(""); }}
-                            style={{ ...s.btn, background: "#2a2a2a", color: "#ccc", border: "1px solid #333" }}
-                          >
-                            Edit
+        {/* User table */}
+        {loading ? (
+          <div style={{ color: "#888", padding: 40, textAlign: "center" }}>Loading users…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ color: "#888", padding: 40, textAlign: "center" }}>No users found.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #2a2a2a" }}>
+                  {["Name", "Email", "Plan", "Chats", "Last Active", "Actions"].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: "#888", fontWeight: 600, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((u) => (
+                  <tr key={u.id} style={{ borderBottom: "1px solid #1e1e1e" }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "#1a1a1a"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  >
+                    <td style={{ padding: "12px 12px", color: "#eaeaea" }}>{u.name || <span style={{ color: "#555" }}>—</span>}</td>
+                    <td style={{ padding: "12px 12px", color: "#aaa" }}>{u.email || <span style={{ color: "#555" }}>—</span>}</td>
+                    <td style={{ padding: "12px 12px" }}>{planBadge(u.plan || "free_trial")}</td>
+                    <td style={{ padding: "12px 12px", color: "#ccc", textAlign: "center" }}>{u.chatCount || 0}</td>
+                    <td style={{ padding: "12px 12px", color: "#888", fontSize: 12, whiteSpace: "nowrap" }}>
+                      {u.lastChat ? new Date(u.lastChat).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                    </td>
+                    <td style={{ padding: "12px 12px" }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {u.plan !== "paid" && u.plan !== "comped" && (
+                          <button onClick={() => updatePlan(u.id, "comped")}
+                            style={{ padding: "5px 10px", background: "#1a2a3a", border: "1px solid #1e4060", borderRadius: 6, color: "#64b5f6", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+                            Upgrade Free
                           </button>
                         )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {saveMsg && <p style={{ marginTop: 10, fontSize: 13, color: saveMsg.startsWith("Error") ? "#f87171" : "#22c55e" }}>{saveMsg}</p>}
-            </div>
-          )}
-        </div>
+                        {(u.plan === "comped" || u.plan === "paid") && (
+                          <button onClick={() => updatePlan(u.id, "free_trial")}
+                            style={{ padding: "5px 10px", background: "#2a2a1a", border: "1px solid #4a3a00", borderRadius: 6, color: "#ffc107", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+                            Reset Trial
+                          </button>
+                        )}
+                        {u.plan !== "paid" && (
+                          <button onClick={() => updatePlan(u.id, "paid")}
+                            style={{ padding: "5px 10px", background: "#1a3a1a", border: "1px solid #2e5e2e", borderRadius: 6, color: "#4caf50", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+                            Mark Paid
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
-    </div>
+    </main>
   );
 }
