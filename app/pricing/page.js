@@ -95,7 +95,7 @@ export default function PricingPage() {
           </div>
 
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 6, marginBottom: 8 }}>
-            <span style={{ fontSize: 52, fontWeight: 800 }}>$15.99</span>
+            <span style={{ fontSize: 52, fontWeight: 800 }}>$9.99</span>
             <span style={{ color: "#bdbdbd", fontSize: 18 }}>/month</span>
           </div>
           <p style={{ color: "#888", fontSize: 14, marginBottom: 28 }}>Cancel anytime</p>
@@ -138,7 +138,7 @@ export default function PricingPage() {
               textAlign: "center",
             }}
           >
-            Subscribe Now — $15.99/mo
+            Subscribe Now — $9.99/mo
           </a>
         </div>
 

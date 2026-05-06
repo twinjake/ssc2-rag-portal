@@ -203,11 +203,11 @@ function LandingPage() {
       <section style={{ maxWidth: 600, margin: "0 auto", padding: "80px 24px", textAlign: "center" }}>
         <h2 style={{ margin: "0 0 12px", fontSize: "clamp(26px, 4vw, 40px)", fontWeight: 800 }}>Simple pricing</h2>
         <p style={{ color: "#BDBDBD", fontSize: 16, lineHeight: 1.6, marginBottom: 36 }}>
-          3 free questions to get started. Then $15.99/month for unlimited access.
+          3 free questions to get started. Then $9.99/month for unlimited access.
         </p>
         <div style={{ background: "#161616", border: "1px solid #2a2a2a", borderRadius: 20, padding: "36px 32px", marginBottom: 28 }}>
           <div style={{ fontSize: 13, color: "#90CAF9", fontWeight: 600, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Unlimited</div>
-          <div style={{ fontSize: 52, fontWeight: 900, lineHeight: 1, marginBottom: 6 }}>$15.99</div>
+          <div style={{ fontSize: 52, fontWeight: 900, lineHeight: 1, marginBottom: 6 }}>$9.99</div>
           <div style={{ color: "#888", fontSize: 14, marginBottom: 28 }}>per month &mdash; cancel any time</div>
           <ul style={{ listStyle: "none", padding: 0, margin: "0 0 28px", textAlign: "left", display: "inline-block" }}>
             {["Unlimited questions", "Full SSC library coverage", "Dr. Spencer\u2019s exact voice", "Source citations on every answer"].map((f) => (
@@ -528,10 +528,10 @@ export default function Home() {
         <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
         <h2 style={{ margin: "0 0 12px", fontSize: 22, fontWeight: 700 }}>You&apos;ve used your 3 free chats</h2>
         <p style={{ color: "#bdbdbd", lineHeight: 1.6, marginBottom: 28 }}>
-          Subscribe for <strong style={{ color: "#0ea5e9" }}>$15.99/month</strong> to get unlimited access to Ask Dr. Spencer.
+          Subscribe for <strong style={{ color: "#0ea5e9" }}>$9.99/month</strong> to get unlimited access to Ask Dr. Spencer.
         </p>
         <a href="/api/stripe/checkout" style={{ display: "block", padding: "14px 20px", borderRadius: 999, background: "#0ea5e9", color: "#001018", fontWeight: 700, fontSize: 16, textDecoration: "none", marginBottom: 12 }}>
-          Subscribe — $15.99/mo
+          Subscribe — $9.99/mo
         </a>
         <a href="/pricing" style={{ display: "block", color: "#888", fontSize: 14, textDecoration: "none" }}>Learn more</a>
       </div>

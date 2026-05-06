@@ -38,7 +38,7 @@ export async function GET(req) {
               name: "Ask Dr. Spencer – Unlimited Access",
               description: "Unlimited AI-powered Q&A from Spencer Study Club content.",
             },
-            unit_amount: 1599, // $15.99
+            unit_amount: 999, // $9.99
             recurring: { interval: "month" },
           },
           quantity: 1,
